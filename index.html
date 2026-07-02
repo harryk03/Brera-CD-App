@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="theme-color" content="#F1EEE7" />
+  <meta name="description" content="Brera Stacker — CD collection & rotation tracker for the Alfa Romeo Brera 10-CD boot stacker + dash slot." />
+  <title>Brera Stacker</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/icon-180.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Brera" />
+
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <!-- Fixed brand watermark: Alfa Romeo badge, bled off the top-right corner. -->
+  <!-- The badge PNG is a static brand asset supplied by the user at assets/alfa-badge.png. -->
+  <!-- If it is missing it degrades to nothing (onerror), and the app still works. -->
+  <img
+    id="watermark"
+    class="watermark"
+    src="assets/alfa-badge.png"
+    alt=""
+    aria-hidden="true"
+    onerror="this.style.display='none'; document.documentElement.classList.add('no-watermark');"
+  />
+
+  <div id="app">
+    <!-- Views are rendered into these mounts by js/app.js -->
+    <main id="view-stacker" class="view" data-view="stacker"></main>
+    <main id="view-spares" class="view" data-view="spares" hidden></main>
+  </div>
+
+  <!-- Bottom tab bar -->
+  <nav class="tabbar" role="tablist" aria-label="Primary">
+    <button class="tab" role="tab" data-tab="stacker" aria-selected="true">
+      <span class="tab-glyph" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6">
+          <rect x="4" y="4" width="16" height="4" rx="1"/><rect x="4" y="10" width="16" height="4" rx="1"/><rect x="4" y="16" width="16" height="4" rx="1"/>
+        </svg>
+      </span>
+      <span class="tab-label">Stacker &amp; Dash</span>
+    </button>
+    <button class="tab" role="tab" data-tab="spares" aria-selected="false">
+      <span class="tab-glyph" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6">
+          <circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/>
+        </svg>
+      </span>
+      <span class="tab-label">Spares</span>
+    </button>
+  </nav>
+
+  <!-- Layer for animated sheets (tracklist / add / swap pickers) -->
+  <div id="layer" class="layer"></div>
+
+  <!-- Global toast for network/error messaging -->
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
