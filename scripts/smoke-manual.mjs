@@ -24,12 +24,12 @@ assert(await page.locator('#rv-title').isVisible(), 'blank review opens');
 assert((await page.locator('#rv-title').inputValue()) === '', 'title starts empty');
 assert((await page.locator('#rv-artist').inputValue()) === '', 'artist starts empty');
 assert((await page.locator('#rv-tracks .track-edit-row').count()) === 1, 'one empty track row to start');
-assert(await page.locator('#rv-cover .preview, #rv-cover span.preview').first().isVisible(), 'gradient/initials cover placeholder shown');
+assert(await page.locator('#rv-cover-wrap .review-cover').first().isVisible(), 'gradient/initials cover placeholder shown');
 
 // live initials update
 await page.locator('#rv-title').fill('Channel Orange');
 await page.waitForTimeout(100);
-const initialsText = (await page.locator('#rv-cover span.preview').innerText()).trim();
+const initialsText = (await page.locator('#rv-cover-wrap .review-cover').innerText()).trim();
 assert(initialsText === 'CO', `initials preview updates live (got "${initialsText}")`);
 
 // validation: missing artist
@@ -76,7 +76,9 @@ await page.locator('#rv-tracks .track-edit-row [data-role="title"]').first().fil
 await page.locator('#rv-confirm').click();
 await page.waitForTimeout(150);
 assert(/already in your collection/i.test(await page.locator('#rv-error').innerText()), 'duplicate check runs on manual add');
-await page.locator('.modal-close').click();
+await page.locator('#rv-back').click();       // back to search
+await page.waitForTimeout(150);
+await page.locator('#album-cancel').click();  // close the sheet
 await page.waitForTimeout(400);
 
 // ===== Burnt CD manual song entry =====
