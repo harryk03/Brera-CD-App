@@ -551,6 +551,10 @@ body { min-height: 100vh; }
 .tab[aria-selected="true"] { color: var(--accent); }
 .tab-glyph { line-height: 0; }
 
+/* Hide the tab bar while a sheet/modal is open so it never overlaps
+   content near the bottom edge (and can't intercept taps). */
+.sheet-open .tabbar { display: none; }
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%) translateY(20px);

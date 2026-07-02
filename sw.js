@@ -8,7 +8,7 @@
    app once fetched, which is what makes covers work offline.
    ============================================================ */
 
-const CACHE = 'brera-shell-v1';
+const CACHE = 'brera-shell-v2';
 const SHELL = [
   './',
   './index.html',
@@ -51,17 +51,20 @@ self.addEventListener('fetch', event => {
   // Never intercept iTunes / remote artwork — always go to network.
   if (url.origin !== self.location.origin) return;
 
-  // App shell: cache-first, fall back to network, then update cache.
+  // App shell: stale-while-revalidate. Serve the cached copy immediately
+  // (fast + works offline), but always fetch a fresh copy in the background
+  // and update the cache, so the NEXT launch picks up any deploy without any
+  // manual steps. Pure cache-first would freeze the installed app on an old
+  // build forever; this keeps it self-updating.
   event.respondWith(
-    caches.match(req).then(cached => {
-      if (cached) return cached;
-      return fetch(req).then(res => {
-        if (res && res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE).then(c => c.put(req, copy));
-        }
-        return res;
-      }).catch(() => cached);
-    })
+    caches.open(CACHE).then(cache =>
+      cache.match(req).then(cached => {
+        const network = fetch(req).then(res => {
+          if (res && res.ok) cache.put(req, res.clone());
+          return res;
+        }).catch(() => cached);
+        return cached || network;
+      })
+    )
   );
 });
