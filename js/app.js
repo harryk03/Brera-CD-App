@@ -533,7 +533,8 @@ async function deleteSpare(id) {
    SWAP PICKERS
    ====================================================================== */
 
-function modalShell(title) {
+function modalShell(title, opts = {}) {
+  const { subtitle = '', showClose = true } = opts;
   const l = layer();
   l.classList.add('active');
   syncLayer();
@@ -541,8 +542,11 @@ function modalShell(title) {
   const modal = h(`
     <div class="modal">
       <div class="modal-head">
-        <div class="modal-title">${escapeHtml(title)}</div>
-        <button class="icon-btn round modal-close" aria-label="Close">✕</button>
+        <div class="modal-titles">
+          <div class="modal-title">${escapeHtml(title)}</div>
+          ${subtitle ? `<div class="modal-sub">${escapeHtml(subtitle)}</div>` : ''}
+        </div>
+        ${showClose ? `<button class="icon-btn round modal-close" aria-label="Close">✕</button>` : ''}
       </div>
       <div class="modal-body"></div>
     </div>`);
@@ -558,7 +562,8 @@ function modalShell(title) {
     setTimeout(() => { scrim.remove(); modal.remove(); if (!activeSheet) l.classList.remove('active'); syncLayer(); }, 360);
   };
   scrim.addEventListener('click', close);
-  modal.querySelector('.modal-close').addEventListener('click', close);
+  const cx = modal.querySelector('.modal-close');
+  if (cx) cx.addEventListener('click', close);
   return { modal, body: modal.querySelector('.modal-body'), close };
 }
 
@@ -639,7 +644,10 @@ function duplicateOf(title, artist) {
 }
 
 function openAddSheet() {
-  const { body, close } = modalShell('Add CD');
+  const { body, close } = modalShell('Add a CD', {
+    subtitle: 'Search to auto-fill the tracklist, then edit anything before adding.',
+    showClose: false,
+  });
   body.innerHTML = `
     <div class="segmented" id="add-mode">
       <button data-mode="album" class="on">Album</button>
@@ -662,47 +670,60 @@ function openAddSheet() {
 
 function renderAlbumMode(root, close) {
   root.innerHTML = `
-    <div class="field">
-      <label>Search album</label>
-      <input type="text" id="album-q" placeholder="Album or artist" />
+    <div id="album-search-view">
+      <div class="field">
+        <label>Search album</label>
+        <div class="search-row">
+          <input type="text" id="album-q" placeholder="Album or artist name" />
+          <button class="btn dark" id="album-search-btn">Search</button>
+        </div>
+      </div>
+      <div id="album-status" class="hint"></div>
+      <ul class="result-list" id="album-results"></ul>
+      <button class="dashed-btn" id="album-manual">Can’t find it? Add it manually</button>
+      <div class="modal-cancel-row"><button class="btn outline-accent" id="album-cancel">Cancel</button></div>
     </div>
-    <div id="album-status" class="hint"></div>
-    <ul class="result-list" id="album-results"></ul>
-    <button class="btn ghost" id="album-manual" style="margin-top:2px">Can’t find it? Add it manually</button>
-    <div id="album-review"></div>
+    <div id="album-review" hidden></div>
   `;
+  const searchView = root.querySelector('#album-search-view');
+  const review = root.querySelector('#album-review');
   const q = root.querySelector('#album-q');
   const status = root.querySelector('#album-status');
   const results = root.querySelector('#album-results');
-  const review = root.querySelector('#album-review');
-  const manualBtn = root.querySelector('#album-manual');
+
+  const showReview = (model) => {
+    searchView.hidden = true;
+    review.hidden = false;
+    renderAlbumReview(review, model, close, backToSearch);
+  };
+  const backToSearch = () => {
+    review.hidden = true;
+    review.innerHTML = '';
+    searchView.hidden = false;
+  };
+
+  root.querySelector('#album-cancel').addEventListener('click', close);
 
   // Manual entry: iTunes doesn't cover everything (e.g. Channel Orange).
   // Opens the same review screen, fully blank, no iTunes dependency.
-  manualBtn.addEventListener('click', () => {
-    results.innerHTML = '';
-    status.className = 'hint';
-    status.textContent = '';
-    manualBtn.style.display = 'none';
-    const model = {
+  root.querySelector('#album-manual').addEventListener('click', () => {
+    showReview({
       title: '', artist: '',
       artworkUrl: null, uploadedBlob: null,
       tracks: [{ title: '', feat: null }], // one empty row to start
       isBurnt: false,
-    };
-    renderAlbumReview(review, model, status, close);
+    });
   });
 
-  const run = debounce(async () => {
+  const doSearch = async () => {
     const term = q.value.trim();
     results.innerHTML = '';
-    manualBtn.style.display = '';
-    review.innerHTML = '';
-    if (term.length < 2) { status.textContent = ''; return; }
+    status.className = 'hint';
+    if (term.length < 2) { status.textContent = term ? 'Type a little more to search.' : ''; return; }
     status.innerHTML = `<span class="spinner"></span> Searching…`;
     try {
       const albums = await itunes.searchAlbums(term);
-      status.textContent = albums.length ? '' : 'No albums found.';
+      status.textContent = albums.length ? '' : 'No albums found — try “Add it manually” below.';
       results.innerHTML = albums.map((a, i) => `
         <li class="result" data-i="${i}">
           <img src="${a.artwork || ''}" alt="" onerror="this.style.visibility='hidden'"/>
@@ -711,24 +732,21 @@ function renderAlbumMode(root, close) {
           <span class="r-add">+</span>
         </li>`).join('');
       results.querySelectorAll('.result').forEach(node => {
-        node.addEventListener('click', () => selectAlbum(albums[Number(node.dataset.i)], root, status, close));
+        node.addEventListener('click', () => selectAlbum(albums[Number(node.dataset.i)], status, showReview));
       });
     } catch (e) {
       status.className = 'hint err';
       status.textContent = errMsg(e);
     }
-  }, 350);
-
+  };
+  const run = debounce(doSearch, 350);
   q.addEventListener('input', () => { status.className = 'hint'; run(); });
+  q.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doSearch(); } });
+  root.querySelector('#album-search-btn').addEventListener('click', doSearch);
   q.focus();
 }
 
-async function selectAlbum(album, root, status, close) {
-  const results = root.querySelector('#album-results');
-  const review = root.querySelector('#album-review');
-  results.innerHTML = '';
-  const manualBtn = root.querySelector('#album-manual');
-  if (manualBtn) manualBtn.style.display = 'none';
+async function selectAlbum(album, status, showReview) {
   status.className = 'hint';
   status.innerHTML = `<span class="spinner"></span> Loading tracklist…`;
   let tracks;
@@ -743,65 +761,59 @@ async function selectAlbum(album, root, status, close) {
 
   // parse feat out of titles
   const parsed = tracks.map(t => itunes.parseFeat(t.rawTitle));
-  const model = {
+  showReview({
     title: album.title,
     artist: album.artist,
     artworkUrl: itunes.upscaleArtwork(album.artwork, 600),
     uploadedBlob: null,
     tracks: parsed.map(p => ({ title: p.title, feat: p.feat })),
     isBurnt: false,
-  };
-  renderAlbumReview(review, model, status, close);
+  });
 }
 
-/** Cover preview for the review screen: uploaded photo, fetched artwork,
- *  or (for manual entries with neither) the same gradient + initials
- *  fallback used everywhere else, driven live off the typed title/artist. */
-function coverPreviewHtml(model) {
-  if (model.uploadedBlob) return `<img class="preview" src="${URL.createObjectURL(model.uploadedBlob)}" alt=""/>`;
-  if (model.artworkUrl) return `<img class="preview" src="${model.artworkUrl}" alt=""/>`;
+/** Review cover thumbnail: uploaded photo, fetched artwork, or (for manual
+ *  entries with neither) the shared gradient + initials + diagonal-slice
+ *  fallback, driven live off the typed title/artist. */
+function reviewCoverHtml(model) {
+  if (model.uploadedBlob) return `<span class="review-cover"><img src="${URL.createObjectURL(model.uploadedBlob)}" alt=""/></span>`;
+  if (model.artworkUrl) return `<span class="review-cover"><img src="${model.artworkUrl}" alt=""/></span>`;
   const pal = makePalette((model.title || '') + (model.artist || ''));
-  return `<span class="preview" style="background:linear-gradient(135deg,${pal[0]},${pal[1]});
-      display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:700;
-      text-shadow:0 1px 2px rgba(0,0,0,.3)">${escapeHtml(initials(model.title || ''))}</span>`;
+  return `<span class="review-cover" style="background:linear-gradient(135deg,${pal[0]},${pal[1]})">${escapeHtml(initials(model.title || ''))}<span class="slice"></span></span>`;
 }
 
-function renderAlbumReview(root, model, status, close) {
+function renderAlbumReview(root, model, close, onBack) {
   const draw = () => {
     root.innerHTML = `
-      <div class="section-label" style="margin-left:0">Review</div>
-      <div class="field"><label>Title</label><input type="text" id="rv-title" value="${escapeHtml(model.title)}"/></div>
-      <div class="field"><label>Artist</label><input type="text" id="rv-artist" value="${escapeHtml(model.artist)}"/></div>
-      <div class="field">
-        <label>Tracks</label>
-        <div id="rv-tracks">
-          ${model.tracks.map((t, i) => `
-            <div class="track-edit-row" data-i="${i}">
-              <input type="text" value="${escapeHtml(t.title)}" data-role="title"/>
-              <button class="icon-btn" data-role="del" aria-label="Remove">✕</button>
-            </div>`).join('')}
-        </div>
-        <button class="btn ghost" id="rv-add-track" style="margin-top:6px">+ Add track</button>
-      </div>
-      <div class="field">
-        <label>Cover</label>
-        <div class="file-drop">
-          <label for="rv-file">Use your own photo instead
-            <input type="file" id="rv-file" accept="image/*"/>
-          </label>
-          <span id="rv-cover">${coverPreviewHtml(model)}</span>
+      <div class="review-head">
+        <span id="rv-cover-wrap">${reviewCoverHtml(model)}</span>
+        <div class="review-fields">
+          <input type="text" id="rv-title" placeholder="Album title" value="${escapeHtml(model.title)}"/>
+          <input type="text" id="rv-artist" placeholder="Artist" value="${escapeHtml(model.artist)}"/>
         </div>
       </div>
+      <div class="review-photo">
+        <div class="review-photo-label">Use your own photo instead of the fetched artwork</div>
+        <input type="file" id="rv-file" accept="image/*"/>
+      </div>
+      <div class="section-label" style="margin-left:0">Tracklist — edit if needed</div>
+      <div id="rv-tracks">
+        ${model.tracks.map((t, i) => `
+          <div class="track-edit-row" data-i="${i}">
+            <span class="te-num">${i + 1}</span>
+            <input type="text" value="${escapeHtml(t.title)}" data-role="title" placeholder="Track ${i + 1}"/>
+            <button class="icon-btn te-del" data-role="del" aria-label="Remove">✕</button>
+          </div>`).join('')}
+      </div>
+      <button class="dashed-btn" id="rv-add-track">+ Add track</button>
       <div id="rv-error" class="hint"></div>
-      <div class="form-actions">
-        <button class="btn accent" id="rv-confirm">Add to Spares</button>
-      </div>`;
+      <button class="btn dark block" id="rv-confirm" style="margin-top:14px">Add to Spares</button>
+      <button class="linkback" id="rv-back">← Back to search</button>`;
 
     // With no fetched artwork, the live initials preview is the only visual
     // feedback available, so refresh it as the user types.
     const refreshCover = () => {
       if (model.uploadedBlob || model.artworkUrl) return;
-      root.querySelector('#rv-cover').innerHTML = coverPreviewHtml(model);
+      root.querySelector('#rv-cover-wrap').innerHTML = reviewCoverHtml(model);
     };
     root.querySelector('#rv-title').addEventListener('input', e => { model.title = e.target.value; refreshCover(); });
     root.querySelector('#rv-artist').addEventListener('input', e => { model.artist = e.target.value; refreshCover(); });
@@ -816,6 +828,7 @@ function renderAlbumReview(root, model, status, close) {
       if (f) { model.uploadedBlob = f; draw(); }
     });
     root.querySelector('#rv-confirm').addEventListener('click', () => confirmAlbum(model, root.querySelector('#rv-error'), close));
+    root.querySelector('#rv-back').addEventListener('click', () => onBack && onBack());
   };
   draw();
 }
@@ -851,24 +864,27 @@ function renderBurntMode(root, close) {
     <div class="hint">Artist: <strong>Various Artists</strong></div>
     <div class="field" style="margin-top:10px">
       <label>Search songs</label>
-      <input type="text" id="bt-q" placeholder="Any song, any artist"/>
+      <div class="search-row">
+        <input type="text" id="bt-q" placeholder="Any song, any artist"/>
+        <button class="btn dark" id="bt-search-btn">Search</button>
+      </div>
     </div>
     <div id="bt-status" class="hint"></div>
     <ul class="result-list" id="bt-results"></ul>
-    <button class="btn ghost" id="bt-manual" style="margin-top:2px">Can’t find this song? Add it manually</button>
+    <button class="dashed-btn" id="bt-manual">Can’t find this song? Add it manually</button>
     <div id="bt-manual-form"></div>
     <div class="section-label" style="margin-left:0">On this disc</div>
     <ul class="chosen-list" id="bt-chosen"></ul>
-    <div class="field" style="margin-top:12px">
-      <label>Cover</label>
-      <div class="file-drop">
-        <label for="bt-file">Add a photo (optional)<input type="file" id="bt-file" accept="image/*"/></label>
-        <img class="preview" id="bt-preview" style="display:none" alt=""/>
-      </div>
+    <div class="review-photo" style="margin-top:12px">
+      <div class="review-photo-label">Add a cover photo (optional)</div>
+      <input type="file" id="bt-file" accept="image/*"/>
+      <img class="preview" id="bt-preview" style="display:none;margin-left:0;margin-top:8px" alt=""/>
     </div>
     <div id="bt-error" class="hint"></div>
-    <div class="form-actions"><button class="btn accent" id="bt-confirm">Add to Spares</button></div>
+    <button class="btn dark block" id="bt-confirm" style="margin-top:14px">Add to Spares</button>
+    <div class="modal-cancel-row"><button class="btn outline-accent" id="bt-cancel">Cancel</button></div>
   `;
+  root.querySelector('#bt-cancel').addEventListener('click', close);
 
   root.querySelector('#bt-name').addEventListener('input', e => model.title = e.target.value);
   root.querySelector('#bt-file').addEventListener('change', e => {
@@ -906,7 +922,7 @@ function renderBurntMode(root, close) {
       <div id="ms-error" class="hint"></div>
       <div class="footer-actions" style="margin-top:0">
         <button class="btn ghost" id="ms-cancel">Cancel</button>
-        <button class="btn accent" id="ms-add">Add song</button>
+        <button class="btn dark" id="ms-add">Add song</button>
       </div>`;
     const tEl = manualForm.querySelector('#ms-title');
     const aEl = manualForm.querySelector('#ms-artist');
@@ -955,6 +971,8 @@ function renderBurntMode(root, close) {
     }
   }, 350);
   q.addEventListener('input', () => { status.className = 'hint'; run(); });
+  q.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); run(); } });
+  root.querySelector('#bt-search-btn').addEventListener('click', () => run());
 
   root.querySelector('#bt-confirm').addEventListener('click', async () => {
     const errEl = root.querySelector('#bt-error');

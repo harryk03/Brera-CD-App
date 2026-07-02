@@ -89,7 +89,7 @@ body { min-height: 100vh; }
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-2);
+  color: var(--accent);
   margin: 18px 2px 10px;
 }
 
@@ -441,32 +441,92 @@ body { min-height: 100vh; }
 }
 .modal.show { transform: translateX(-50%) translateY(0); }
 .modal-head {
-  padding: 14px 18px 10px; flex: 0 0 auto;
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 16px 18px 8px; flex: 0 0 auto;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
 }
-.modal-title { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
-.modal-body { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 18px 20px; }
+.modal-titles { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.modal-title { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+.modal-sub { font-size: 13px; color: var(--text-2); line-height: 1.35; }
+.modal-body { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 6px 18px 20px; }
 
-/* segmented toggle (Add CD modes) */
+/* segmented toggle (Add CD modes) — active = solid near-black */
 .segmented {
   display: flex; background: var(--bg); border: 1px solid var(--card-border);
-  border-radius: 10px; padding: 3px; margin: 4px 0 14px;
+  border-radius: 12px; padding: 4px; margin: 4px 0 16px;
 }
 .segmented button {
   flex: 1; border: none; background: transparent; color: var(--text-2);
-  padding: 9px; border-radius: 8px; font-size: 14px; font-weight: 650; cursor: pointer;
+  padding: 12px; border-radius: 9px; font-size: 15px; font-weight: 700; cursor: pointer;
   transition: background .15s ease, color .15s ease;
 }
-.segmented button.on { background: var(--card); color: var(--text); box-shadow: var(--shadow); }
+.segmented button.on { background: var(--text); color: #fff; box-shadow: var(--shadow); }
 
 .field { margin-bottom: 12px; }
-.field label { display: block; font-size: 12px; font-weight: 700; color: var(--text-2); letter-spacing: .04em; text-transform: uppercase; margin-bottom: 5px; }
+.field label { display: block; font-size: 12px; font-weight: 700; color: var(--text-2); letter-spacing: .04em; text-transform: uppercase; margin-bottom: 6px; }
 .field input[type="text"], .field input:not([type]) {
-  width: 100%; border: 1px solid var(--card-border); background: var(--bg);
-  border-radius: 9px; padding: 11px 12px; font-size: 15px; color: var(--text);
+  width: 100%; border: 1px solid var(--card-border); background: #fff;
+  border-radius: 10px; padding: 13px 14px; font-size: 15px; color: var(--text);
 }
-.track-edit-row { display: flex; gap: 8px; margin-bottom: 7px; align-items: center; }
-.track-edit-row input { flex: 1; }
+
+/* search input + button row */
+.search-row { display: flex; gap: 8px; align-items: stretch; }
+.search-row input { flex: 1 1 auto; }
+.search-row .btn { flex: 0 0 auto; }
+
+/* dashed "add it manually" / "+ add track" buttons */
+.dashed-btn {
+  width: 100%; border: 1.5px dashed var(--card-border); background: transparent;
+  border-radius: 12px; padding: 15px; font-size: 15px; font-weight: 650; color: var(--text);
+  text-align: center; cursor: pointer; margin-top: 6px;
+  transition: background .15s ease, border-color .15s ease, transform .1s ease;
+}
+.dashed-btn:active { transform: scale(.99); }
+.dashed-btn:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--card-border)); }
+
+/* button variants */
+.btn.dark { background: var(--text); color: #fff; border-color: var(--text); }
+.btn.block { width: 100%; display: block; text-align: center; }
+.btn.outline-accent {
+  background: transparent; border: 1.5px solid var(--accent); color: var(--accent);
+  text-transform: uppercase; letter-spacing: .06em; box-shadow: none;
+}
+.modal-cancel-row { display: flex; justify-content: center; padding-top: 12px; }
+.modal-cancel-row .btn { min-width: 180px; }
+.linkback {
+  display: block; width: 100%; text-align: center; background: none; border: none;
+  color: var(--text-2); font-size: 14.5px; font-weight: 600; padding: 14px 0 4px; cursor: pointer;
+}
+
+/* review head: cover thumbnail beside title/artist fields */
+.review-head { display: flex; gap: 14px; align-items: flex-start; margin: 4px 0 16px; }
+.review-cover {
+  width: 76px; height: 76px; border-radius: 12px; overflow: hidden; position: relative;
+  flex: 0 0 auto; box-shadow: inset 0 0 0 1px rgba(20,17,15,.06);
+  display: flex; align-items: center; justify-content: center;
+  color: rgba(255,255,255,.95); font-weight: 700; font-size: 26px; text-shadow: 0 1px 3px rgba(0,0,0,.3);
+}
+.review-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.review-cover .slice {
+  position: absolute; inset: 0;
+  background: linear-gradient(115deg, transparent 46%, var(--accent) 46%, var(--accent) 56%, transparent 56%);
+  opacity: .55;
+}
+.review-fields { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.review-fields input {
+  width: 100%; border: 1px solid var(--card-border); background: #fff;
+  border-radius: 10px; padding: 13px 14px; font-size: 15px; color: var(--text);
+}
+.review-photo { margin: 4px 0 16px; }
+.review-photo-label { font-size: 12px; font-weight: 700; color: var(--accent); letter-spacing: .04em; text-transform: uppercase; margin-bottom: 8px; }
+.review-photo input[type="file"] { font-size: 13.5px; color: var(--text-2); }
+
+.track-edit-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+.track-edit-row .te-num { flex: 0 0 auto; width: 16px; text-align: right; color: var(--slot-num); font-size: 13px; font-variant-numeric: tabular-nums; }
+.track-edit-row input {
+  flex: 1; border: 1px solid var(--card-border); background: #fff;
+  border-radius: 10px; padding: 13px 14px; font-size: 15px; color: var(--text);
+}
+.icon-btn.te-del { color: var(--accent); background: #fff; border-color: color-mix(in srgb, var(--accent) 30%, var(--card-border)); }
 
 .result-list { list-style: none; margin: 0; padding: 0; }
 .result {
