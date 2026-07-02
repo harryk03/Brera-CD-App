@@ -797,12 +797,28 @@ function renderAlbumReview(root, model, close, onBack) {
       </div>
       <div class="section-label" style="margin-left:0">Tracklist — edit if needed</div>
       <div id="rv-tracks">
-        ${model.tracks.map((t, i) => `
+        ${model.tracks.map((t, i) => {
+          // feat === null -> no featured artist (offer a "+ artist" button).
+          // feat is a string (incl. "") -> the featured-artist field is shown.
+          const hasFeat = t.feat !== null && t.feat !== undefined;
+          return `
           <div class="track-edit-row" data-i="${i}">
             <span class="te-num">${i + 1}</span>
-            <input type="text" value="${escapeHtml(t.title)}" data-role="title" placeholder="Track ${i + 1}"/>
-            <button class="icon-btn te-del" data-role="del" aria-label="Remove">✕</button>
-          </div>`).join('')}
+            <div class="te-main">
+              <input type="text" value="${escapeHtml(t.title)}" data-role="title" placeholder="Track ${i + 1}"/>
+              ${hasFeat ? `
+                <div class="te-feat-row">
+                  <span class="te-feat-label">feat.</span>
+                  <input type="text" class="te-feat" data-role="feat" value="${escapeHtml(t.feat)}" placeholder="Featured artist"/>
+                  <button class="te-feat-remove" data-role="feat-remove" aria-label="Remove featured artist">✕</button>
+                </div>` : ''}
+            </div>
+            <div class="te-actions">
+              ${hasFeat ? '' : `<button class="te-featbtn" data-role="feat-add">+ artist</button>`}
+              <button class="icon-btn te-del" data-role="del" aria-label="Remove track">✕</button>
+            </div>
+          </div>`;
+        }).join('')}
       </div>
       <button class="dashed-btn" id="rv-add-track">+ Add track</button>
       <div id="rv-error" class="hint"></div>
@@ -821,6 +837,13 @@ function renderAlbumReview(root, model, close, onBack) {
       const i = Number(rowEl.dataset.i);
       rowEl.querySelector('[data-role="title"]').addEventListener('input', e => model.tracks[i].title = e.target.value);
       rowEl.querySelector('[data-role="del"]').addEventListener('click', () => { model.tracks.splice(i, 1); draw(); });
+      rowEl.querySelector('[data-role="feat-add"]')?.addEventListener('click', () => {
+        model.tracks[i].feat = '';
+        draw();
+        root.querySelector(`#rv-tracks .track-edit-row[data-i="${i}"] .te-feat`)?.focus();
+      });
+      rowEl.querySelector('[data-role="feat"]')?.addEventListener('input', e => model.tracks[i].feat = e.target.value);
+      rowEl.querySelector('[data-role="feat-remove"]')?.addEventListener('click', () => { model.tracks[i].feat = null; draw(); });
     });
     root.querySelector('#rv-add-track').addEventListener('click', () => { model.tracks.push({ title: '', feat: null }); draw(); });
     root.querySelector('#rv-file').addEventListener('change', e => {
@@ -846,7 +869,10 @@ async function confirmAlbum(model, errEl, close) {
     return;
   }
   const features = {};
-  model.tracks.forEach(t => { if (t.title.trim() && t.feat) features[t.title.trim()] = t.feat; });
+  model.tracks.forEach(t => {
+    const f = t.feat && t.feat.trim();
+    if (t.title.trim() && f) features[t.title.trim()] = f;
+  });
 
   const album = newAlbum({ title, artist, isBurnt: false, tracks, features, trackArtists: null });
   await attachCover(album, model.uploadedBlob, model.artworkUrl);

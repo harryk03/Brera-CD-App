@@ -523,13 +523,28 @@ body { min-height: 100vh; }
 .review-photo-label { font-size: 12px; font-weight: 700; color: var(--accent); letter-spacing: .04em; text-transform: uppercase; margin-bottom: 8px; }
 .review-photo input[type="file"] { font-size: 13.5px; color: var(--text-2); }
 
-.track-edit-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
-.track-edit-row .te-num { flex: 0 0 auto; width: 16px; text-align: right; color: var(--slot-num); font-size: 13px; font-variant-numeric: tabular-nums; }
+.track-edit-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: flex-start; }
+.track-edit-row .te-num { flex: 0 0 auto; width: 16px; text-align: right; color: var(--slot-num); font-size: 13px; font-variant-numeric: tabular-nums; padding-top: 15px; }
+.te-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .track-edit-row input {
-  flex: 1; border: 1px solid var(--card-border); background: #fff;
+  width: 100%; border: 1px solid var(--card-border); background: #fff;
   border-radius: 10px; padding: 13px 14px; font-size: 15px; color: var(--text);
 }
+.te-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding-top: 4px; }
+.te-featbtn {
+  background: none; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--card-border));
+  color: var(--accent); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; font-weight: 650;
+  cursor: pointer; white-space: nowrap;
+}
+.te-featbtn:active { transform: scale(.95); }
 .icon-btn.te-del { color: var(--accent); background: #fff; border-color: color-mix(in srgb, var(--accent) 30%, var(--card-border)); }
+
+/* per-track featured-artist field — echoes the italic-accent "feat." look */
+.te-feat-row { display: flex; align-items: center; gap: 8px; }
+.te-feat-label { flex: 0 0 auto; color: var(--accent); font-style: italic; font-weight: 600; font-size: 13.5px; }
+.track-edit-row input.te-feat { flex: 1 1 auto; width: auto; color: var(--accent); font-style: italic; }
+.track-edit-row input.te-feat::placeholder { color: color-mix(in srgb, var(--accent) 55%, transparent); font-style: italic; }
+.te-feat-remove { flex: 0 0 auto; background: none; border: none; color: var(--text-2); font-size: 14px; cursor: pointer; padding: 6px; }
 
 .result-list { list-style: none; margin: 0; padding: 0; }
 .result {
