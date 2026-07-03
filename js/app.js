@@ -802,8 +802,8 @@ function renderAlbumReview(root, model, close, onBack) {
       <div class="review-head">
         <span id="rv-cover-wrap">${reviewCoverHtml(model)}</span>
         <div class="review-fields">
-          <input type="text" id="rv-title" placeholder="Album title" value="${escapeHtml(model.title)}"/>
-          <input type="text" id="rv-artist" placeholder="Artist" value="${escapeHtml(model.artist)}"/>
+          <input type="text" id="rv-title" placeholder="Album title" autocapitalize="words" value="${escapeHtml(model.title)}"/>
+          <input type="text" id="rv-artist" placeholder="Artist" autocapitalize="words" value="${escapeHtml(model.artist)}"/>
         </div>
       </div>
       <div class="review-photo">
@@ -820,11 +820,11 @@ function renderAlbumReview(root, model, close, onBack) {
           <div class="track-edit-row" data-i="${i}">
             <span class="te-num">${i + 1}</span>
             <div class="te-main">
-              <input type="text" value="${escapeHtml(t.title)}" data-role="title" placeholder="Track ${i + 1}"/>
+              <input type="text" value="${escapeHtml(t.title)}" data-role="title" placeholder="Track ${i + 1}" autocapitalize="words"/>
               ${hasFeat ? `
                 <div class="te-feat-row">
                   <span class="te-feat-label">feat.</span>
-                  <input type="text" class="te-feat" data-role="feat" value="${escapeHtml(t.feat)}" placeholder="Featured artist"/>
+                  <input type="text" class="te-feat" data-role="feat" value="${escapeHtml(t.feat)}" placeholder="Featured artist" autocapitalize="words"/>
                   <button class="te-feat-remove" data-role="feat-remove" aria-label="Remove featured artist">✕</button>
                 </div>` : ''}
             </div>
@@ -901,7 +901,7 @@ async function confirmAlbum(model, errEl, close) {
 function renderBurntMode(root, close) {
   const model = { title: '', tracks: [] /* {title, feat, artist} */, uploadedBlob: null };
   root.innerHTML = `
-    <div class="field"><label>Disc name</label><input type="text" id="bt-name" placeholder="e.g. Summer Drive 2026"/></div>
+    <div class="field"><label>Disc name</label><input type="text" id="bt-name" placeholder="e.g. Summer Drive 2026" autocapitalize="words"/></div>
     <div class="hint">Artist: <strong>Various Artists</strong></div>
     <div class="field" style="margin-top:10px">
       <label>Search songs</label>
@@ -958,8 +958,8 @@ function renderBurntMode(root, close) {
   manualBtn.addEventListener('click', () => {
     if (manualForm.innerHTML) { manualForm.innerHTML = ''; return; } // toggle off
     manualForm.innerHTML = `
-      <div class="field" style="margin-top:8px"><label>Song title</label><input type="text" id="ms-title" placeholder="Song title"/></div>
-      <div class="field"><label>Artist</label><input type="text" id="ms-artist" placeholder="Artist"/></div>
+      <div class="field" style="margin-top:8px"><label>Song title</label><input type="text" id="ms-title" placeholder="Song title" autocapitalize="words"/></div>
+      <div class="field"><label>Artist</label><input type="text" id="ms-artist" placeholder="Artist" autocapitalize="words"/></div>
       <div id="ms-error" class="hint"></div>
       <div class="footer-actions" style="margin-top:0">
         <button class="btn ghost" id="ms-cancel">Cancel</button>
@@ -1004,6 +1004,15 @@ function renderBurntMode(root, close) {
           const { title, feat } = itunes.parseFeat(s.rawTitle);
           model.tracks.push({ title, feat, artist: s.artist });
           drawChosen();
+          // Reset the search so the pick clearly registered (prevents the
+          // "did it add?" double-tapping). Toast + haptic confirm it.
+          q.value = '';
+          results.innerHTML = '';
+          status.className = 'hint';
+          status.textContent = '';
+          if (navigator.vibrate) navigator.vibrate(18);
+          toast(`Added “${title}”.`);
+          q.focus();
         });
       });
     } catch (e) {
