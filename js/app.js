@@ -6,7 +6,7 @@
    is persisted to IndexedDB (store.js) and survives restarts.
    ============================================================ */
 
-import { loadState, saveState, imageUrl, putImage, deleteImage } from './store.js';
+import { loadState, saveState, imageUrl, putImage, deleteImage, getImageBlob } from './store.js';
 import * as itunes from './itunes.js';
 import { NetworkError } from './itunes.js';
 import { uuid, initials, makePalette, escapeHtml, debounce, h, toast, dupKey } from './util.js';
@@ -243,7 +243,22 @@ function renderSpares() {
     <div class="footer-actions">
       <button class="btn accent" id="add-cd">+ Add CD</button>
     </div>
+
+    <div class="sync-actions">
+      <button class="btn ghost" id="export-btn">⤴ Share collection</button>
+      <button class="btn ghost" id="import-btn">⤵ Import</button>
+      <input type="file" id="import-file" accept="application/json,.json" hidden />
+    </div>
+    <p class="sync-note">Send the exported file to another phone to copy your whole collection — CDs, slot positions and covers.</p>
   `;
+
+  view.querySelector('#export-btn').addEventListener('click', exportCollection);
+  view.querySelector('#import-btn').addEventListener('click', () => view.querySelector('#import-file').click());
+  view.querySelector('#import-file').addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (f) handleImportFile(f);
+    e.target.value = ''; // allow re-importing the same file later
+  });
 
   const search = view.querySelector('#spare-search');
   search.addEventListener('input', debounce(e => {
@@ -787,8 +802,8 @@ function renderAlbumReview(root, model, close, onBack) {
       <div class="review-head">
         <span id="rv-cover-wrap">${reviewCoverHtml(model)}</span>
         <div class="review-fields">
-          <input type="text" id="rv-title" placeholder="Album title" value="${escapeHtml(model.title)}"/>
-          <input type="text" id="rv-artist" placeholder="Artist" value="${escapeHtml(model.artist)}"/>
+          <input type="text" id="rv-title" placeholder="Album title" autocapitalize="words" value="${escapeHtml(model.title)}"/>
+          <input type="text" id="rv-artist" placeholder="Artist" autocapitalize="words" value="${escapeHtml(model.artist)}"/>
         </div>
       </div>
       <div class="review-photo">
@@ -805,11 +820,11 @@ function renderAlbumReview(root, model, close, onBack) {
           <div class="track-edit-row" data-i="${i}">
             <span class="te-num">${i + 1}</span>
             <div class="te-main">
-              <input type="text" value="${escapeHtml(t.title)}" data-role="title" placeholder="Track ${i + 1}"/>
+              <input type="text" value="${escapeHtml(t.title)}" data-role="title" placeholder="Track ${i + 1}" autocapitalize="words"/>
               ${hasFeat ? `
                 <div class="te-feat-row">
                   <span class="te-feat-label">feat.</span>
-                  <input type="text" class="te-feat" data-role="feat" value="${escapeHtml(t.feat)}" placeholder="Featured artist"/>
+                  <input type="text" class="te-feat" data-role="feat" value="${escapeHtml(t.feat)}" placeholder="Featured artist" autocapitalize="words"/>
                   <button class="te-feat-remove" data-role="feat-remove" aria-label="Remove featured artist">✕</button>
                 </div>` : ''}
             </div>
@@ -886,7 +901,7 @@ async function confirmAlbum(model, errEl, close) {
 function renderBurntMode(root, close) {
   const model = { title: '', tracks: [] /* {title, feat, artist} */, uploadedBlob: null };
   root.innerHTML = `
-    <div class="field"><label>Disc name</label><input type="text" id="bt-name" placeholder="e.g. Summer Drive 2026"/></div>
+    <div class="field"><label>Disc name</label><input type="text" id="bt-name" placeholder="e.g. Summer Drive 2026" autocapitalize="words"/></div>
     <div class="hint">Artist: <strong>Various Artists</strong></div>
     <div class="field" style="margin-top:10px">
       <label>Search songs</label>
@@ -943,8 +958,8 @@ function renderBurntMode(root, close) {
   manualBtn.addEventListener('click', () => {
     if (manualForm.innerHTML) { manualForm.innerHTML = ''; return; } // toggle off
     manualForm.innerHTML = `
-      <div class="field" style="margin-top:8px"><label>Song title</label><input type="text" id="ms-title" placeholder="Song title"/></div>
-      <div class="field"><label>Artist</label><input type="text" id="ms-artist" placeholder="Artist"/></div>
+      <div class="field" style="margin-top:8px"><label>Song title</label><input type="text" id="ms-title" placeholder="Song title" autocapitalize="words"/></div>
+      <div class="field"><label>Artist</label><input type="text" id="ms-artist" placeholder="Artist" autocapitalize="words"/></div>
       <div id="ms-error" class="hint"></div>
       <div class="footer-actions" style="margin-top:0">
         <button class="btn ghost" id="ms-cancel">Cancel</button>
@@ -989,6 +1004,15 @@ function renderBurntMode(root, close) {
           const { title, feat } = itunes.parseFeat(s.rawTitle);
           model.tracks.push({ title, feat, artist: s.artist });
           drawChosen();
+          // Reset the search so the pick clearly registered (prevents the
+          // "did it add?" double-tapping). Toast + haptic confirm it.
+          q.value = '';
+          results.innerHTML = '';
+          status.className = 'hint';
+          status.textContent = '';
+          if (navigator.vibrate) navigator.vibrate(18);
+          toast(`Added “${title}”.`);
+          q.focus();
         });
       });
     } catch (e) {
@@ -1062,6 +1086,123 @@ function addToSpares(album) {
 function errMsg(e) {
   if (e instanceof NetworkError) return e.message;
   return 'Something went wrong. Try again.';
+}
+
+/* ======================================================================
+   SHARE / BACKUP — export & import the whole collection as one file.
+
+   There is no backend; this is how two phones (e.g. shared car) stay in
+   sync. Export bundles the AppState AND every cover image (as base64) so
+   the file is self-contained and works offline. Import replaces the whole
+   collection on this device (confirmed first, since it's destructive).
+   ====================================================================== */
+
+const EXPORT_TAG = 'brera-stacker';
+
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
+async function dataURLToBlob(dataUrl) {
+  const res = await fetch(dataUrl);
+  return res.blob();
+}
+
+async function exportCollection() {
+  try {
+    // collect every referenced cover image
+    const ids = new Set();
+    [...state.stacker, state.dash, ...state.spares].filter(Boolean).forEach(a => {
+      if (a.coverImageUri) ids.add(a.coverImageUri);
+    });
+    const images = {};
+    for (const id of ids) {
+      const blob = await getImageBlob(id);
+      if (blob) images[id] = await blobToDataURL(blob);
+    }
+    const payload = { app: EXPORT_TAG, version: 1, exportedAt: new Date().toISOString(), state, images };
+    const json = JSON.stringify(payload);
+    const fname = `brera-stacker-${new Date().toISOString().slice(0, 10)}.json`;
+    const file = new File([json], fname, { type: 'application/json' });
+
+    // Prefer the native share sheet on mobile (send straight to Messages/AirDrop).
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: 'Brera Stacker collection' });
+        return;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return; // user cancelled the share sheet
+        // otherwise fall through to a download
+      }
+    }
+    // Fallback: download the file.
+    const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = fname; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    toast('Collection saved to a file — send it to the other phone.');
+  } catch (e) {
+    console.error(e);
+    toast('Could not export the collection.', true);
+  }
+}
+
+async function handleImportFile(file) {
+  let payload;
+  try {
+    payload = JSON.parse(await file.text());
+  } catch {
+    toast('That file isn’t readable — is it a Brera backup?', true);
+    return;
+  }
+  if (!payload || payload.app !== EXPORT_TAG || !payload.state || !Array.isArray(payload.state.stacker)) {
+    toast('That file isn’t a Brera Stacker backup.', true);
+    return;
+  }
+  const s = payload.state;
+  const count = s.stacker.filter(Boolean).length + (s.dash ? 1 : 0) + (Array.isArray(s.spares) ? s.spares.length : 0);
+  const when = payload.exportedAt ? new Date(payload.exportedAt).toLocaleDateString() : 'an unknown date';
+
+  confirmSheet({
+    title: 'Import collection?',
+    message: `This replaces everything on this phone with ${count} CD${count === 1 ? '' : 's'} from the backup (exported ${when}). Your current collection here will be overwritten.`,
+    confirmLabel: 'Replace my collection',
+    onConfirm: async () => {
+      try {
+        if (payload.images) {
+          for (const [id, dataUrl] of Object.entries(payload.images)) {
+            const blob = await dataURLToBlob(dataUrl);
+            await putImage(id, blob);
+          }
+        }
+        await saveState(payload.state);
+        state = await loadState(); // normalises shape
+        render();
+        toast(`Imported ${count} CD${count === 1 ? '' : 's'}.`);
+        backfillArtwork(); // fetch any covers the file didn't include
+      } catch (e) {
+        console.error(e);
+        toast('Import failed partway — please try the file again.', true);
+      }
+    },
+  });
+}
+
+/** Small on-brand confirm bottom-sheet (used for destructive import). */
+function confirmSheet({ title, message, confirmLabel, onConfirm }) {
+  const { body, close } = modalShell(title, { showClose: true });
+  body.innerHTML = `
+    <p class="hint" style="font-size:14px;line-height:1.45">${escapeHtml(message)}</p>
+    <button class="btn accent block" id="cf-yes" style="margin-top:8px">${escapeHtml(confirmLabel)}</button>
+    <div class="modal-cancel-row"><button class="btn outline-accent" id="cf-no">Cancel</button></div>
+  `;
+  body.querySelector('#cf-no').addEventListener('click', close);
+  body.querySelector('#cf-yes').addEventListener('click', () => { close(); onConfirm(); });
 }
 
 /* ======================================================================
