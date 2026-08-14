@@ -796,6 +796,95 @@ function reviewCoverHtml(model) {
   return `<span class="review-cover" style="background:linear-gradient(135deg,${pal[0]},${pal[1]})">${escapeHtml(initials(model.title || ''))}<span class="slice"></span></span>`;
 }
 
+/** Pointer-based drag-to-reorder for the review tracklist.
+ *  Uses Pointer Events (not HTML5 drag-and-drop) so it works with touch on
+ *  iOS/Android. The dragged row lifts out of flow and follows the finger while
+ *  a placeholder shows where it will land; on drop we reorder `model.tracks`
+ *  and redraw, which renumbers everything. Reordering never changes the entry
+ *  type — it stays a standard album, never flagged burnt/custom. */
+function enableTrackReorder(list, model, redraw) {
+  if (!list) return;
+  list.style.position = 'relative';
+  list.querySelectorAll('.te-drag').forEach(handle => {
+    handle.addEventListener('pointerdown', e => startTrackDrag(e, handle, list, model, redraw));
+  });
+}
+
+function startTrackDrag(downEv, handle, list, model, redraw) {
+  if (downEv.pointerType === 'mouse' && downEv.button !== 0) return;
+  downEv.preventDefault();
+
+  const row = handle.closest('.track-edit-row');
+  const fromIndex = [...list.querySelectorAll('.track-edit-row')].indexOf(row);
+  if (fromIndex < 0) return;
+
+  const listRect = list.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  const grabOffsetY = downEv.clientY - rowRect.top;
+
+  // Placeholder holds the row's slot while it floats.
+  const ph = document.createElement('div');
+  ph.className = 'te-placeholder';
+  ph.style.height = rowRect.height + 'px';
+  row.parentNode.insertBefore(ph, row);
+
+  // Lift the row out of flow.
+  row.classList.add('dragging');
+  row.style.position = 'absolute';
+  row.style.left = (rowRect.left - listRect.left) + 'px';
+  row.style.width = rowRect.width + 'px';
+  row.style.margin = '0';
+  row.style.zIndex = '30';
+
+  const setTop = clientY => {
+    const lr = list.getBoundingClientRect(); // re-measure so it tracks page scroll
+    row.style.top = (clientY - grabOffsetY - lr.top) + 'px';
+  };
+  setTop(downEv.clientY);
+
+  try { handle.setPointerCapture(downEv.pointerId); } catch (_) {}
+
+  const onMove = ev => {
+    setTop(ev.clientY);
+    const y = ev.clientY;
+    const others = [...list.querySelectorAll('.track-edit-row')].filter(r => r !== row);
+    let placed = false;
+    for (const r of others) {
+      const rc = r.getBoundingClientRect();
+      if (y < rc.top + rc.height / 2) { list.insertBefore(ph, r); placed = true; break; }
+    }
+    if (!placed) list.appendChild(ph);
+  };
+
+  const onUp = () => {
+    handle.removeEventListener('pointermove', onMove);
+    handle.removeEventListener('pointerup', onUp);
+    handle.removeEventListener('pointercancel', onUp);
+    try { handle.releasePointerCapture(downEv.pointerId); } catch (_) {}
+
+    // Target index = number of remaining rows sitting before the placeholder.
+    let insertAt = 0;
+    for (const n of list.children) {
+      if (n === ph) break;
+      if (n !== row && n.classList && n.classList.contains('track-edit-row')) insertAt++;
+    }
+
+    row.classList.remove('dragging');
+    row.removeAttribute('style');
+    ph.remove();
+
+    if (insertAt !== fromIndex) {
+      const [moved] = model.tracks.splice(fromIndex, 1);
+      model.tracks.splice(insertAt, 0, moved);
+    }
+    redraw();
+  };
+
+  handle.addEventListener('pointermove', onMove);
+  handle.addEventListener('pointerup', onUp);
+  handle.addEventListener('pointercancel', onUp);
+}
+
 function renderAlbumReview(root, model, close, onBack) {
   const draw = () => {
     root.innerHTML = `
@@ -818,6 +907,9 @@ function renderAlbumReview(root, model, close, onBack) {
           const hasFeat = t.feat !== null && t.feat !== undefined;
           return `
           <div class="track-edit-row" data-i="${i}">
+            <span class="te-drag" data-role="drag" aria-label="Drag to reorder" title="Drag to reorder">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 6h10M5 10h10M5 14h10"/></svg>
+            </span>
             <span class="te-num">${i + 1}</span>
             <div class="te-main">
               <input type="text" value="${escapeHtml(t.title)}" data-role="title" placeholder="Track ${i + 1}" autocapitalize="words"/>
@@ -835,7 +927,7 @@ function renderAlbumReview(root, model, close, onBack) {
           </div>`;
         }).join('')}
       </div>
-      <button class="dashed-btn" id="rv-add-track">+ Add track</button>
+      <button class="dashed-btn" id="rv-add-track">+ Add Custom Track</button>
       <div id="rv-error" class="hint"></div>
       <button class="btn dark block" id="rv-confirm" style="margin-top:14px">Add to Spares</button>
       <button class="linkback" id="rv-back">← Back to search</button>`;
@@ -860,7 +952,14 @@ function renderAlbumReview(root, model, close, onBack) {
       rowEl.querySelector('[data-role="feat"]')?.addEventListener('input', e => model.tracks[i].feat = e.target.value);
       rowEl.querySelector('[data-role="feat-remove"]')?.addEventListener('click', () => { model.tracks[i].feat = null; draw(); });
     });
-    root.querySelector('#rv-add-track').addEventListener('click', () => { model.tracks.push({ title: '', feat: null }); draw(); });
+    root.querySelector('#rv-add-track').addEventListener('click', () => {
+      model.tracks.push({ title: '', feat: null });
+      draw();
+      // Focus the freshly added row so the user can type straight away.
+      const rows = root.querySelectorAll('#rv-tracks .track-edit-row [data-role="title"]');
+      rows[rows.length - 1]?.focus();
+    });
+    enableTrackReorder(root.querySelector('#rv-tracks'), model, draw);
     root.querySelector('#rv-file').addEventListener('change', e => {
       const f = e.target.files[0];
       if (f) { model.uploadedBlob = f; draw(); }
