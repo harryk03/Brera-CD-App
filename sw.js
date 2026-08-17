@@ -8,7 +8,8 @@
    app once fetched, which is what makes covers work offline.
    ============================================================ */
 
-const CACHE = 'brera-shell-v4';
+const CACHE = 'brera-shell-v5';
+let prevCache = null;
 const SHELL = [
   './',
   './index.html',
@@ -37,9 +38,16 @@ self.addEventListener('install', event => {
 
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    caches.keys().then(keys => {
+      const old = keys.filter(k => k !== CACHE);
+      // If there were old caches, notify all clients that an update is ready.
+      if (old.length > 0) {
+        self.clients.matchAll().then(clients => {
+          clients.forEach(c => c.postMessage({ type: 'update-ready' }));
+        });
+      }
+      return Promise.all(old.map(k => caches.delete(k)));
+    }).then(() => self.clients.claim())
   );
 });
 
