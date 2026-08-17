@@ -529,6 +529,28 @@ body { min-height: 100vh; }
 
 .track-edit-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: flex-start; }
 .track-edit-row .te-num { flex: 0 0 auto; width: 16px; text-align: right; color: var(--slot-num); font-size: 13px; font-variant-numeric: tabular-nums; padding-top: 15px; }
+
+/* drag handle for reordering tracks (Option B) */
+.te-drag {
+  flex: 0 0 auto; width: 26px; align-self: stretch;
+  display: flex; align-items: flex-start; justify-content: center; padding-top: 12px;
+  color: var(--slot-num); cursor: grab; touch-action: none;
+  -webkit-user-select: none; user-select: none;
+}
+.te-drag:active { cursor: grabbing; }
+.te-drag svg { width: 17px; height: 17px; display: block; }
+/* lifted row while dragging */
+.track-edit-row.dragging {
+  background: var(--card); border-radius: 12px; padding: 4px 6px;
+  box-shadow: var(--shadow-raised); z-index: 30;
+}
+.track-edit-row.dragging .te-drag { color: var(--accent); }
+/* gap that shows where the dragged row will drop */
+.te-placeholder {
+  margin-bottom: 8px; border-radius: 12px;
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 45%, var(--card-border));
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
 .te-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .track-edit-row input {
   width: 100%; border: 1px solid var(--card-border); background: #fff;
