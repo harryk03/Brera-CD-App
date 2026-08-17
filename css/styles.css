@@ -43,6 +43,20 @@ html, body {
 
 body { min-height: 100vh; }
 
+/* update banner — appears when a new app version is ready */
+#update-banner {
+  position: fixed; bottom: var(--safe-bottom); left: 0; right: 0;
+  background: var(--accent); color: #fff; padding: 14px 18px;
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  font-size: 14px; font-weight: 600; z-index: 999; box-shadow: var(--shadow-raised);
+}
+#update-banner button {
+  background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.35);
+  color: #fff; border-radius: 8px; padding: 7px 14px; font-size: 13px; font-weight: 650;
+  cursor: pointer; white-space: nowrap;
+}
+#update-banner button:active { background: rgba(255,255,255,.35); }
+
 /* ---------- Brand watermark ---------- */
 .watermark {
   position: fixed;

@@ -30,7 +30,22 @@ async function boot() {
 function registerSW() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.addEventListener('message', e => {
+      if (e.data.type === 'update-ready') {
+        showUpdateBanner();
+      }
+    });
   }
+}
+
+function showUpdateBanner() {
+  const banner = document.createElement('div');
+  banner.id = 'update-banner';
+  banner.innerHTML = `<span>Update available</span><button id="update-refresh">Refresh</button>`;
+  document.body.appendChild(banner);
+  banner.querySelector('#update-refresh').addEventListener('click', () => {
+    location.reload();
+  });
 }
 
 /* ---------- persistence ---------- */
