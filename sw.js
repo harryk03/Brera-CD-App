@@ -8,8 +8,7 @@
    app once fetched, which is what makes covers work offline.
    ============================================================ */
 
-const CACHE = 'brera-shell-v5';
-let prevCache = null;
+const CACHE = 'brera-shell-v6';
 const SHELL = [
   './',
   './index.html',
@@ -17,6 +16,7 @@ const SHELL = [
   './js/app.js',
   './js/store.js',
   './js/itunes.js',
+  './js/spotify.js',
   './js/util.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
@@ -66,7 +66,9 @@ self.addEventListener('fetch', event => {
   // build forever; this keeps it self-updating.
   event.respondWith(
     caches.open(CACHE).then(cache =>
-      cache.match(req).then(cached => {
+      // ignoreSearch: the Spotify sign-in redirect lands on "/?code=…", which
+      // must still resolve to the cached app shell (and work offline).
+      cache.match(req, { ignoreSearch: true }).then(cached => {
         const network = fetch(req).then(res => {
           if (res && res.ok) cache.put(req, res.clone());
           return res;
