@@ -26,17 +26,6 @@ async function boot() {
   render();
   // background artwork fetch, sequential, silent
   backfillArtwork();
-  resumeSpotifyRedirect();
-}
-
-/** If Spotify just sent the user back from sign-in, finish the token
- *  exchange and pick up the playlist import they started. */
-async function resumeSpotifyRedirect() {
-  const r = await spotify.handleRedirect();
-  if (!r) return;
-  if (r.error) { toast(r.error, true); return; }
-  toast('Spotify connected.');
-  if (r.pendingLink) openAddSheet({ mode: 'burnt', spotifyLink: r.pendingLink });
 }
 
 function registerSW() {
@@ -685,9 +674,7 @@ function duplicateOf(title, artist) {
   return all.find(a => dupKey(a.title, a.artist) === key) || null;
 }
 
-/** opts.mode: 'album' | 'burnt'; opts.spotifyLink: a playlist link to import
- *  as soon as Burnt mode opens (used when resuming after Spotify sign-in). */
-function openAddSheet(opts = {}) {
+function openAddSheet() {
   const { body, close } = modalShell('Add a CD', {
     subtitle: 'Search to auto-fill the tracklist, then edit anything before adding.',
     showClose: false,
@@ -704,10 +691,10 @@ function openAddSheet(opts = {}) {
   const setMode = mode => {
     seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
     if (mode === 'album') renderAlbumMode(content, close);
-    else renderBurntMode(content, close, opts);
+    else renderBurntMode(content, close);
   };
   seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
-  setMode(opts.mode || 'album');
+  setMode('album');
 }
 
 /* ---------- Mode A: Album ---------- */
@@ -1026,7 +1013,7 @@ async function confirmAlbum(model, errEl, close) {
 
 /* ---------- Mode B: Burnt CD ---------- */
 
-function renderBurntMode(root, close, opts = {}) {
+function renderBurntMode(root, close) {
   const model = { title: '', tracks: [] /* {title, feat, artist} */, uploadedBlob: null };
   root.innerHTML = `
     <div class="field"><label>Disc name</label><input type="text" id="bt-name" placeholder="e.g. Summer Drive 2026" autocapitalize="words"/></div>
@@ -1085,122 +1072,67 @@ function renderBurntMode(root, close, opts = {}) {
   drawChosen();
 
   /* ---- Spotify playlist import ----
-     Paste a playlist link and every track lands in `model.tracks` in the
-     same {title, feat, artist} shape as a searched or manually typed song,
-     so the normal confirm path saves it as a burnt disc unchanged. */
+     Paste a public playlist link and every track lands in `model.tracks` in
+     the same {title, feat, artist} shape as a searched or manually typed
+     song, so the normal confirm path saves it as a burnt disc unchanged.
+     No sign-in or setup: js/spotify.js reads the playlist through the
+     proxy in worker/. */
   const spBody = root.querySelector('#sp-body');
-  const drawSpotify = () => {
-    if (!spotify.isConfigured()) {
-      spBody.innerHTML = `
-        <div class="hint">One-time setup: create a free app at <strong>developer.spotify.com</strong>, paste its <strong>Client ID</strong> below, and add this Redirect URI to the app’s settings:</div>
-        <div class="sp-uri-row"><code class="sp-uri" id="sp-uri">${escapeHtml(spotify.redirectUri())}</code><button class="btn ghost sp-copy" id="sp-copy">Copy</button></div>
-        <div class="search-row" style="margin-top:8px">
-          <input type="text" id="sp-client" placeholder="Spotify Client ID" autocapitalize="off" autocorrect="off" spellcheck="false"/>
-          <button class="btn dark" id="sp-save">Save</button>
-        </div>
-        <div id="sp-status" class="hint"></div>`;
-      spBody.querySelector('#sp-copy').addEventListener('click', async () => {
-        try { await navigator.clipboard.writeText(spotify.redirectUri()); toast('Redirect URI copied.'); }
-        catch (_) { toast('Copy failed — long-press the URI to copy it.', true); }
+  spBody.innerHTML = `
+    <div class="search-row">
+      <input type="url" id="sp-link" placeholder="Paste a playlist link" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false"/>
+      <button class="btn dark" id="sp-go">Import</button>
+    </div>
+    <div id="sp-status" class="hint"></div>
+    <div class="sp-foot">Public playlists only · no Spotify sign-in needed.</div>`;
+  const linkEl = spBody.querySelector('#sp-link');
+  const st = spBody.querySelector('#sp-status');
+
+  const doImport = async link => {
+    const id = spotify.parsePlaylistId(link);
+    if (!id) { st.className = 'hint err'; st.textContent = 'That doesn’t look like a Spotify playlist link.'; return; }
+    st.className = 'hint';
+    st.innerHTML = `<span class="spinner"></span> Fetching playlist…`;
+    try {
+      const pl = await spotify.fetchPlaylist(id, (done, total) => {
+        st.innerHTML = `<span class="spinner"></span> Fetching ${done} of ${total} tracks…`;
       });
-      const save = () => {
-        const id = spBody.querySelector('#sp-client').value.trim();
-        if (!/^[a-f0-9]{32}$/i.test(id)) {
-          const st = spBody.querySelector('#sp-status');
-          st.className = 'hint err'; st.textContent = 'That doesn’t look like a Spotify Client ID (32 hex characters).';
-          return;
-        }
-        spotify.setClientId(id);
-        toast('Spotify Client ID saved.');
-        drawSpotify();
-        spBody.querySelector('#sp-link')?.focus();
-      };
-      spBody.querySelector('#sp-save').addEventListener('click', save);
-      spBody.querySelector('#sp-client').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
-      return;
-    }
-
-    const connected = spotify.isConnected();
-    spBody.innerHTML = `
-      <div class="search-row">
-        <input type="url" id="sp-link" placeholder="Paste a playlist link" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false"/>
-        <button class="btn dark" id="sp-go">Import</button>
-      </div>
-      <div id="sp-status" class="hint"></div>
-      <div class="sp-foot">
-        ${connected ? 'Connected to Spotify · <a href="#" id="sp-disconnect">Disconnect</a>' : 'You’ll sign in to Spotify the first time.'}
-        · <a href="#" id="sp-reset">Change Client ID</a>
-      </div>`;
-    const linkEl = spBody.querySelector('#sp-link');
-    const st = spBody.querySelector('#sp-status');
-
-    const doImport = async link => {
-      const id = spotify.parsePlaylistId(link);
-      if (!id) { st.className = 'hint err'; st.textContent = 'That doesn’t look like a Spotify playlist link.'; return; }
+      const have = new Set(model.tracks.map(t => dupKey(t.title, t.artist)));
+      let added = 0;
+      for (const t of pl.tracks) {
+        // Same parsing as a typed song: "(feat. X)" in the title wins;
+        // otherwise any extra Spotify artists become the feat.
+        const { title, feat: titleFeat } = itunes.parseFeat(t.rawTitle);
+        const artist = t.artists[0] || 'Unknown Artist';
+        const feat = titleFeat || (t.artists.length > 1 ? t.artists.slice(1).join(', ') : null);
+        const key = dupKey(title, artist);
+        if (have.has(key)) continue; // re-importing the same playlist won't double up
+        have.add(key);
+        model.tracks.push({ title, feat, artist });
+        added++;
+      }
+      if (!model.title.trim()) {
+        model.title = pl.name;
+        root.querySelector('#bt-name').value = pl.name;
+      }
+      drawChosen();
+      linkEl.value = '';
       st.className = 'hint';
-      if (!spotify.isConnected()) {
-        st.innerHTML = `<span class="spinner"></span> Taking you to Spotify to sign in…`;
-        try { await spotify.beginAuth(link); } catch (e) { st.className = 'hint err'; st.textContent = errMsg(e); }
-        return;
-      }
-      st.innerHTML = `<span class="spinner"></span> Fetching playlist…`;
-      try {
-        const pl = await spotify.fetchPlaylist(id, (done, total) => {
-          st.innerHTML = `<span class="spinner"></span> Fetching ${done} of ${total} tracks…`;
-        });
-        const have = new Set(model.tracks.map(t => dupKey(t.title, t.artist)));
-        let added = 0;
-        for (const t of pl.tracks) {
-          // Same parsing as a typed song: "(feat. X)" in the title wins;
-          // otherwise any extra Spotify artists become the feat.
-          const { title, feat: titleFeat } = itunes.parseFeat(t.rawTitle);
-          const artist = t.artists[0] || 'Unknown Artist';
-          const feat = titleFeat || (t.artists.length > 1 ? t.artists.slice(1).join(', ') : null);
-          const key = dupKey(title, artist);
-          if (have.has(key)) continue; // re-importing the same playlist won't double up
-          have.add(key);
-          model.tracks.push({ title, feat, artist });
-          added++;
-        }
-        if (!model.title.trim()) {
-          model.title = pl.name;
-          root.querySelector('#bt-name').value = pl.name;
-        }
-        drawChosen();
-        linkEl.value = '';
-        st.className = 'hint';
-        st.textContent = added
-          ? `Imported ${added} track${added === 1 ? '' : 's'} from “${pl.name}”.`
-          : (pl.tracks.length ? 'Those tracks are already on this disc.' : 'That playlist has no importable tracks.');
-        if (navigator.vibrate) navigator.vibrate(18);
-        if (added) toast(`Imported ${added} track${added === 1 ? '' : 's'}.`);
-      } catch (e) {
-        if (e.kind === 'auth') {
-          // Tokens were cleared. Redraw so the footer reflects that, then
-          // put the message and the pasted link back so one more tap on
-          // Import re-signs-in and resumes.
-          drawSpotify();
-          const again = spBody.querySelector('#sp-link');
-          if (again) again.value = link;
-          const st2 = spBody.querySelector('#sp-status');
-          if (st2) { st2.className = 'hint err'; st2.textContent = errMsg(e); }
-          return;
-        }
-        st.className = 'hint err';
-        st.textContent = errMsg(e);
-      }
-    };
-
-    spBody.querySelector('#sp-go').addEventListener('click', () => doImport(linkEl.value));
-    linkEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doImport(linkEl.value); } });
-    // Pasting a link is the whole gesture — import straight away.
-    linkEl.addEventListener('paste', () => setTimeout(() => { if (spotify.parsePlaylistId(linkEl.value)) doImport(linkEl.value); }, 0));
-    spBody.querySelector('#sp-disconnect')?.addEventListener('click', e => { e.preventDefault(); spotify.disconnect(); toast('Spotify disconnected.'); drawSpotify(); });
-    spBody.querySelector('#sp-reset').addEventListener('click', e => { e.preventDefault(); spotify.clearClientId(); drawSpotify(); });
-
-    if (opts.spotifyLink) { linkEl.value = opts.spotifyLink; opts.spotifyLink = null; doImport(linkEl.value); }
+      st.textContent = added
+        ? `Imported ${added} track${added === 1 ? '' : 's'} from “${pl.name}”.`
+        : (pl.tracks.length ? 'Those tracks are already on this disc.' : 'That playlist has no importable tracks.');
+      if (navigator.vibrate) navigator.vibrate(18);
+      if (added) toast(`Imported ${added} track${added === 1 ? '' : 's'}.`);
+    } catch (e) {
+      st.className = 'hint err';
+      st.textContent = errMsg(e);
+    }
   };
-  drawSpotify();
+
+  spBody.querySelector('#sp-go').addEventListener('click', () => doImport(linkEl.value));
+  linkEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doImport(linkEl.value); } });
+  // Pasting a link is the whole gesture — import straight away.
+  linkEl.addEventListener('paste', () => setTimeout(() => { if (spotify.parsePlaylistId(linkEl.value)) doImport(linkEl.value); }, 0));
 
   // Manual song entry — for tracks iTunes' catalogue doesn't return.
   const manualBtn = root.querySelector('#bt-manual');

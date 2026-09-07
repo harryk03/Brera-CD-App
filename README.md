@@ -36,6 +36,9 @@ phone.
 | `js/app.js` | Views, state transitions, the container-transform tracklist animation, Add/Swap flows |
 | `js/store.js` | IndexedDB persistence — app state + durable cover-image blobs |
 | `js/itunes.js` | Zero-auth iTunes Search API + `(feat. …)` parsing + specific network errors |
+| `js/spotify.js` | Spotify playlist import (public playlists, no login) via the proxy in `worker/` |
+| `js/spotify-pkce.js` | **Not loaded.** The earlier OAuth (PKCE) version, kept as a fallback if private-playlist support is ever needed |
+| `worker/` | Cloudflare Worker that reads a public playlist's track list server-side — see `worker/README.md` |
 | `js/util.js` | uuid, initials, palette, toast, helpers |
 | `manifest.webmanifest`, `sw.js` | PWA install + offline app-shell cache |
 | `icons/` | Generated app icons (`scripts/gen-icons.mjs`) |
@@ -60,9 +63,19 @@ Everything lives in **IndexedDB** (`brera-stacker`):
   destructive action — two-tap confirm.
 - **Reorder mode** repositions within the 10 stacker slots (▲▼); it never
   touches Spares.
-- **Add CD** — *Album* (iTunes album search → full tracklist) or *Burnt CD*
-  (per-song search, each track keeps its own artist). Duplicate protection
-  checks Stacker + Dash + Spares. New CDs always land in Spares.
+- **Add CD** — *Album* (iTunes album search → full tracklist, with drag-to-
+  reorder and custom tracks) or *Burnt CD* (per-song search, each track keeps
+  its own artist). Duplicate protection checks Stacker + Dash + Spares. New
+  CDs always land in Spares.
+- **Import from Spotify** (Burnt CD) — paste a **public** playlist link and
+  every track (title, artist, featured artists) lands on the disc, with the
+  disc named after the playlist. No Spotify account, Client ID, or sign-in:
+  `js/spotify.js` asks the small Cloudflare Worker in `worker/` to read the
+  playlist's public embed page and return clean JSON. Private playlists
+  can't be read this way. Deploy the Worker once (see `worker/README.md`)
+  and set its URL in the `PROXY` constant in `js/spotify.js`. The earlier
+  OAuth/PKCE implementation is kept in `js/spotify-pkce.js` as a fallback
+  should private-playlist support ever be needed.
 - **Background artwork backfill** — on load, any album missing a cover is
   looked up on iTunes sequentially and cached; fails silently offline.
 
@@ -75,5 +88,5 @@ Optional tooling; needs Playwright (`npm i playwright`). Not required to run the
 
 ## Deliberately not built
 
-Spotify/Apple Music import, dark mode, per-album accent colors, and confirm
-dialogs on swap/eject — all explicitly out of scope.
+Apple Music import, dark mode, per-album accent colors, and confirm dialogs
+on swap/eject — all explicitly out of scope.
