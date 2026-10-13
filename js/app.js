@@ -16,6 +16,7 @@ let state = null;
 let currentTab = 'stacker';
 let reordering = false;
 let spareFilter = '';
+let collectionFilter = '';
 
 /* ---------- boot ---------- */
 
@@ -62,6 +63,7 @@ async function commit() {
 
 function render() {
   renderStacker();
+  renderCollection();
   renderSpares();
 }
 
@@ -202,6 +204,95 @@ function wireDash(view) {
     eject.addEventListener('click', e => { e.stopPropagation(); ejectDash(); });
     card.addEventListener('click', () => openTracklist(card, state.dash, { source: 'dash' }));
   }
+}
+
+/* ---------- Collection view ---------- */
+
+/** Search every song you own, or (with an empty search) browse every CD with
+ *  where it lives. Tapping a CD or a song opens that CD's normal detail view. */
+function renderCollection() {
+  const view = document.getElementById('view-collection');
+  const total = ownedPlaces().length;
+  view.innerHTML = `
+    <header class="app-header">
+      <h1 class="app-title">Collection</h1>
+      <p class="app-subtitle">Every CD you own &middot; ${total} CD${total === 1 ? '' : 's'}</p>
+    </header>
+
+    <div class="search-wrap">
+      <span class="search-ico" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
+      </span>
+      <input class="search-input" id="collection-search" type="text" inputmode="search"
+             placeholder="Search songs on your CDs" autocapitalize="off" autocorrect="off" spellcheck="false"
+             value="${escapeHtml(collectionFilter)}" />
+    </div>
+
+    <div id="collection-list"></div>
+  `;
+  view.querySelector('#collection-search').addEventListener('input', e => {
+    collectionFilter = e.target.value;
+    drawCollectionList(); // list only, so the keyboard and caret stay put
+  });
+  drawCollectionList();
+}
+
+function drawCollectionList() {
+  const list = document.getElementById('collection-list');
+  if (!list) return;
+  const q = collectionFilter.trim();
+
+  // Searching: songs. Otherwise: every CD, A–Z by artist then title.
+  if (q.length >= 2) {
+    const hits = searchOwnedSongs(q);
+    if (!hits.length) {
+      list.innerHTML = `<div class="empty-state">
+          <div class="big">Not on any of your CDs</div>
+          <div class="small">Add it to a burnt CD from Add CD &rarr; Burnt CD.</div>
+        </div>`;
+      return;
+    }
+    list.innerHTML = `<div class="coll-count">${hits.length} song${hits.length === 1 ? '' : 's'} found</div>` +
+      hits.map((h, i) => `
+        <div class="own-hit" data-hit="${i}">
+          <div class="own-body">
+            <div class="own-title">${escapeHtml(h.title)}${h.feat ? ` <span class="track-feat" style="display:inline">feat. ${escapeHtml(h.feat)}</span>` : ''}</div>
+            <div class="own-sub">${escapeHtml(h.album.title)} · ${escapeHtml(h.artist)}</div>
+          </div>
+          <span class="own-where">${escapeHtml(h.status)}</span>
+        </div>`).join('');
+    list.querySelectorAll('[data-hit]').forEach(node => {
+      const h = hits[Number(node.dataset.hit)];
+      node.addEventListener('click', () => openTracklist(node, h.album, h.ctx));
+    });
+    return;
+  }
+
+  const places = ownedPlaces().sort((a, b) => {
+    const ak = `${a.album.artist} ${a.album.title}`.toLowerCase(), bk = `${b.album.artist} ${b.album.title}`.toLowerCase();
+    return ak < bk ? -1 : ak > bk ? 1 : 0;
+  });
+  if (!places.length) {
+    list.innerHTML = `<div class="empty-state">
+        <div class="big">No CDs yet</div>
+        <div class="small">Add a CD from the Spares tab and it will show up here.</div>
+      </div>`;
+    return;
+  }
+  list.innerHTML = places.map((p, i) => `
+    <div class="card" data-cd="${i}">
+      ${coverHtml(p.album)}
+      <div class="card-body">
+        <div class="card-title">${escapeHtml(p.album.title)}${p.album.isBurnt ? '<span class="badge-burnt">BURNT</span>' : ''}</div>
+        <div class="card-artist">${escapeHtml(p.album.artist)}</div>
+      </div>
+      <span class="own-where">${escapeHtml(p.status)}</span>
+    </div>`).join('');
+  fillCovers(list);
+  list.querySelectorAll('[data-cd]').forEach(node => {
+    const p = places[Number(node.dataset.cd)];
+    node.addEventListener('click', () => openTracklist(node, p.album, p.ctx));
+  });
 }
 
 /* ---------- Spares view ---------- */
@@ -674,25 +765,29 @@ function duplicateOf(title, artist) {
   return all.find(a => dupKey(a.title, a.artist) === key) || null;
 }
 
+/** Every CD you own and where it lives. `ctx` is what openTracklist needs to
+ *  open the CD's detail view; `status` is the tag shown in the Collection tab. */
+function ownedPlaces() {
+  return [
+    ...state.stacker.map((a, i) => a && { album: a, where: `Slot ${i + 1}`, status: 'In Stacker', ctx: { source: 'stacker', index: i } }),
+    state.dash && { album: state.dash, where: 'Dash', status: 'In Dash', ctx: { source: 'dash' } },
+    ...state.spares.map(a => ({ album: a, where: 'Spares', status: 'Spares', ctx: { source: 'spares' } })),
+  ].filter(Boolean);
+}
+
 /** Search every song on every CD you own (Stacker, Dash, Spares) by title or
- *  artist. Local only — works offline. Each hit says which CD and where it is,
- *  so you can tell whether a song is already on a disc before burning it. */
+ *  artist. Local only — works offline. Each hit says which CD and where it is. */
 function searchOwnedSongs(query) {
-  const norm = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const norm = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const terms = norm(query).split(/\s+/).filter(Boolean);
   if (!terms.length) return [];
-  const places = [
-    ...state.stacker.map((a, i) => a && { album: a, where: `Slot ${i + 1}` }),
-    state.dash && { album: state.dash, where: 'Dash' },
-    ...state.spares.map(a => ({ album: a, where: 'Spares' })),
-  ].filter(Boolean);
   const hits = [];
-  for (const { album, where } of places) {
+  for (const { album, where, status, ctx } of ownedPlaces()) {
     album.tracks.forEach((title, i) => {
       const artist = (album.trackArtists && album.trackArtists[i]) || album.artist;
       const feat = (album.features && album.features[title]) || '';
       const hay = norm(`${title} ${artist} ${feat}`);
-      if (terms.every(t => hay.includes(t))) hits.push({ title, artist, feat, album, where });
+      if (terms.every(t => hay.includes(t))) hits.push({ title, artist, feat, album, where, status, ctx });
     });
   }
   return hits;
@@ -1046,12 +1141,6 @@ function renderBurntMode(root, close) {
       <div class="sp-head"><span class="sp-dot"></span>Import from Spotify</div>
       <div id="sp-body"></div>
     </div>
-    <div class="own-check" id="own-check">
-      <div class="sp-head"><span class="sp-dot own-dot"></span>Already own it?</div>
-      <input type="search" id="own-q" placeholder="Search songs on your CDs" autocapitalize="off" autocorrect="off" spellcheck="false"/>
-      <div id="own-status" class="hint"></div>
-      <ul class="own-results" id="own-results"></ul>
-    </div>
     <div class="field" style="margin-top:10px">
       <label>Search songs</label>
       <div class="search-row">
@@ -1163,33 +1252,6 @@ function renderBurntMode(root, close) {
   linkEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doImport(linkEl.value); } });
   // Pasting a link is the whole gesture — import straight away.
   linkEl.addEventListener('paste', () => setTimeout(() => { if (spotify.parsePlaylistId(linkEl.value)) doImport(linkEl.value); }, 0));
-
-  // "Already own it?" — look a song up across your existing CDs.
-  const ownQ = root.querySelector('#own-q');
-  const ownStatus = root.querySelector('#own-status');
-  const ownResults = root.querySelector('#own-results');
-  const runOwn = () => {
-    const q = ownQ.value.trim();
-    ownResults.innerHTML = '';
-    if (q.length < 2) { ownStatus.className = 'hint'; ownStatus.textContent = ''; return; }
-    const hits = searchOwnedSongs(q);
-    if (!hits.length) {
-      ownStatus.className = 'hint own-miss';
-      ownStatus.textContent = 'Not on any of your CDs — search below to add it.';
-      return;
-    }
-    ownStatus.className = 'hint own-found';
-    ownStatus.textContent = `On ${hits.length === 1 ? '1 CD' : `${hits.length} of your CDs`}:`;
-    ownResults.innerHTML = hits.slice(0, 30).map(h => `
-      <li class="own-hit">
-        <div class="own-body">
-          <div class="own-title">${escapeHtml(h.title)}${h.feat ? ` <span class="track-feat" style="display:inline">feat. ${escapeHtml(h.feat)}</span>` : ''}</div>
-          <div class="own-sub">${escapeHtml(h.artist)} · ${escapeHtml(h.album.title)}</div>
-        </div>
-        <span class="own-where">${escapeHtml(h.where)}</span>
-      </li>`).join('');
-  };
-  ownQ.addEventListener('input', runOwn);
 
   // Manual song entry — for tracks iTunes' catalogue doesn't return.
   const manualBtn = root.querySelector('#bt-manual');
@@ -1489,6 +1551,7 @@ function switchTab(name) {
   currentTab = name;
   document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
   document.getElementById('view-stacker').hidden = name !== 'stacker';
+  document.getElementById('view-collection').hidden = name !== 'collection';
   document.getElementById('view-spares').hidden = name !== 'spares';
   window.scrollTo(0, 0);
 }

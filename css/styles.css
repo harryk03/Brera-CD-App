@@ -507,28 +507,23 @@ body { min-height: 100vh; }
 .sp-import .search-row { margin-top: 0; }
 .sp-foot { font-size: 12.5px; color: var(--text-2); margin-top: 6px; }
 
-/* "Already own it?" — search your own CDs for a song (Burnt CD mode) */
-.own-check {
-  margin: 12px 0 4px; padding: 12px 14px 10px;
-  background: var(--card); border: 1px solid var(--card-border); border-radius: 12px;
+/* Collection tab — song results + status tags */
+.coll-count { font-size: 12.5px; font-weight: 600; color: var(--text-2); margin: 2px 4px 8px; }
+.own-hit {
+  display: flex; align-items: center; gap: 10px; padding: 12px 14px; margin-bottom: 8px;
+  background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius);
+  box-shadow: var(--shadow); cursor: pointer;
 }
-.own-dot { background: var(--accent); }
-.own-check input[type="search"] {
-  width: 100%; border: 1px solid var(--card-border); background: #fff;
-  border-radius: 10px; padding: 13px 14px; font-size: 15px; color: var(--text);
-}
-.own-found { color: var(--text); font-weight: 600; }
-.own-miss { color: var(--text-2); }
-.own-results { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; }
-.own-hit { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--card-border); }
+.own-hit:active { transform: scale(.99); }
 .own-body { flex: 1 1 auto; min-width: 0; }
-.own-title { font-size: 14.5px; font-weight: 650; }
+.own-title { font-size: 15px; font-weight: 650; }
 .own-sub { font-size: 12.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .own-where {
   flex: 0 0 auto; font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
   color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--card-border));
   border-radius: 999px; padding: 4px 9px; background: #fff;
 }
+#view-collection .card { cursor: pointer; }
 
 /* dashed "add it manually" / "+ add track" buttons */
 .dashed-btn {
