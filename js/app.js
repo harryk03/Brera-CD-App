@@ -674,6 +674,30 @@ function duplicateOf(title, artist) {
   return all.find(a => dupKey(a.title, a.artist) === key) || null;
 }
 
+/** Search every song on every CD you own (Stacker, Dash, Spares) by title or
+ *  artist. Local only — works offline. Each hit says which CD and where it is,
+ *  so you can tell whether a song is already on a disc before burning it. */
+function searchOwnedSongs(query) {
+  const norm = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const terms = norm(query).split(/\s+/).filter(Boolean);
+  if (!terms.length) return [];
+  const places = [
+    ...state.stacker.map((a, i) => a && { album: a, where: `Slot ${i + 1}` }),
+    state.dash && { album: state.dash, where: 'Dash' },
+    ...state.spares.map(a => ({ album: a, where: 'Spares' })),
+  ].filter(Boolean);
+  const hits = [];
+  for (const { album, where } of places) {
+    album.tracks.forEach((title, i) => {
+      const artist = (album.trackArtists && album.trackArtists[i]) || album.artist;
+      const feat = (album.features && album.features[title]) || '';
+      const hay = norm(`${title} ${artist} ${feat}`);
+      if (terms.every(t => hay.includes(t))) hits.push({ title, artist, feat, album, where });
+    });
+  }
+  return hits;
+}
+
 function openAddSheet() {
   const { body, close } = modalShell('Add a CD', {
     subtitle: 'Search to auto-fill the tracklist, then edit anything before adding.',
@@ -1022,6 +1046,12 @@ function renderBurntMode(root, close) {
       <div class="sp-head"><span class="sp-dot"></span>Import from Spotify</div>
       <div id="sp-body"></div>
     </div>
+    <div class="own-check" id="own-check">
+      <div class="sp-head"><span class="sp-dot own-dot"></span>Already own it?</div>
+      <input type="search" id="own-q" placeholder="Search songs on your CDs" autocapitalize="off" autocorrect="off" spellcheck="false"/>
+      <div id="own-status" class="hint"></div>
+      <ul class="own-results" id="own-results"></ul>
+    </div>
     <div class="field" style="margin-top:10px">
       <label>Search songs</label>
       <div class="search-row">
@@ -1133,6 +1163,33 @@ function renderBurntMode(root, close) {
   linkEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doImport(linkEl.value); } });
   // Pasting a link is the whole gesture — import straight away.
   linkEl.addEventListener('paste', () => setTimeout(() => { if (spotify.parsePlaylistId(linkEl.value)) doImport(linkEl.value); }, 0));
+
+  // "Already own it?" — look a song up across your existing CDs.
+  const ownQ = root.querySelector('#own-q');
+  const ownStatus = root.querySelector('#own-status');
+  const ownResults = root.querySelector('#own-results');
+  const runOwn = () => {
+    const q = ownQ.value.trim();
+    ownResults.innerHTML = '';
+    if (q.length < 2) { ownStatus.className = 'hint'; ownStatus.textContent = ''; return; }
+    const hits = searchOwnedSongs(q);
+    if (!hits.length) {
+      ownStatus.className = 'hint own-miss';
+      ownStatus.textContent = 'Not on any of your CDs — search below to add it.';
+      return;
+    }
+    ownStatus.className = 'hint own-found';
+    ownStatus.textContent = `On ${hits.length === 1 ? '1 CD' : `${hits.length} of your CDs`}:`;
+    ownResults.innerHTML = hits.slice(0, 30).map(h => `
+      <li class="own-hit">
+        <div class="own-body">
+          <div class="own-title">${escapeHtml(h.title)}${h.feat ? ` <span class="track-feat" style="display:inline">feat. ${escapeHtml(h.feat)}</span>` : ''}</div>
+          <div class="own-sub">${escapeHtml(h.artist)} · ${escapeHtml(h.album.title)}</div>
+        </div>
+        <span class="own-where">${escapeHtml(h.where)}</span>
+      </li>`).join('');
+  };
+  ownQ.addEventListener('input', runOwn);
 
   // Manual song entry — for tracks iTunes' catalogue doesn't return.
   const manualBtn = root.querySelector('#bt-manual');
