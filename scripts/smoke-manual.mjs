@@ -1,5 +1,6 @@
 import { chromium } from 'playwright';
-const EXE = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+// Uses Playwright's own browser; set CHROME_PATH to use a specific Chrome.
+const EXE = process.env.CHROME_PATH || undefined;
 const BASE = 'http://127.0.0.1:8123';
 const SHOT = '/tmp/claude-0/-home-user-Brera-CD-App/993a40f2-1604-5a22-974d-bc3bf4d7d7d4/scratchpad';
 
@@ -55,15 +56,18 @@ await page.screenshot({ path: SHOT + '/07-manual-review.png' });
 await page.locator('#rv-confirm').click();
 await page.waitForTimeout(500);
 assert((await page.locator('.modal').count()) === 0, 'sheet closes after manual save');
-const titles = await page.locator('#spares-list .card-title').allInnerTexts();
-assert(titles.some(t => t.includes('Channel Orange')), 'manual album landed in Spares');
+// Stage 1: new CDs land Unassigned (shown in Collection) until placed in a car.
+await page.locator('.tab[data-tab="collection"]').click();
+const coCard = page.locator('#collection-list .card', { hasText: 'Channel Orange' });
+assert((await coCard.count()) === 1 && (await coCard.locator('.own-where').textContent()) === 'Unassigned', 'manual album landed in Collection as Unassigned');
 
 // verify tracks persisted correctly (whitespace row dropped => 2 tracks)
-await page.locator('#spares-list .card', { hasText: 'Channel Orange' }).click();
+await coCard.click();
 await page.waitForTimeout(700);
 assert((await page.locator('.sheet .track').count()) === 2, 'whitespace-only track row was trimmed (2 tracks)');
 await page.locator('.sheet-close').click();
 await page.waitForTimeout(900);
+await page.locator('.tab[data-tab="spares"]').click();
 
 // duplicate check on manual add
 await page.locator('#add-cd').click();
@@ -108,9 +112,9 @@ await page.screenshot({ path: SHOT + '/08-burnt-manual.png' });
 // confirm burnt disc
 await page.locator('#bt-confirm').click();
 await page.waitForTimeout(500);
-await page.locator('.tab[data-tab="spares"]').click();
+await page.locator('.tab[data-tab="collection"]').click();
 await page.waitForTimeout(200);
-assert((await page.locator('#spares-list .card', { hasText: 'Rare Mix' }).count()) === 1, 'burnt disc with manual song saved to Spares');
+assert((await page.locator('#collection-list .card', { hasText: 'Rare Mix' }).count()) === 1, 'burnt disc with manual song saved (Unassigned, in Collection)');
 
 console.log('\nPAGE ERRORS:', errors.length ? errors : 'none');
 if (errors.length) process.exitCode = 1;

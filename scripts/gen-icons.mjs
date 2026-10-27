@@ -25,7 +25,7 @@ const TARGETS = [
 ];
 
 const browser = await chromium.launch({
-  executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+  executablePath: process.env.CHROME_PATH || undefined, // default: Playwright's own browser
 });
 const page = await browser.newPage();
 

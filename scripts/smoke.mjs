@@ -1,6 +1,7 @@
 import { chromium } from 'playwright';
 
-const EXE = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+// Uses Playwright's own browser; set CHROME_PATH to use a specific Chrome.
+const EXE = process.env.CHROME_PATH || undefined;
 const BASE = 'http://127.0.0.1:8123';
 const SHOT = '/tmp/claude-0/-home-user-Brera-CD-App/993a40f2-1604-5a22-974d-bc3bf4d7d7d4/scratchpad';
 
@@ -18,7 +19,8 @@ await page.goto(BASE + '/index.html', { waitUntil: 'networkidle' });
 await page.waitForTimeout(400);
 
 // 1) Loads clean, empty state
-assert(await page.locator('#view-stacker .app-title').innerText() === 'Brera Stacker', 'title renders');
+// Stage 1: a fresh install is a generic first car; only upgraded collections become "Brera Stacker".
+assert(await page.locator('#view-stacker .app-title').innerText() === 'My Stacker', 'title renders');
 assert((await page.locator('.slot-empty').count()) === 10, '10 empty stacker slots');
 assert(await page.locator('#dash-empty').isVisible(), 'empty dash placeholder');
 await page.screenshot({ path: SHOT + '/01-stacker-empty.png' });
@@ -59,6 +61,11 @@ await page.evaluate(() => new Promise((resolve, reject) => {
 
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(400);
+
+// Stage 1: seeding the old single-car shape triggers the one-time upgrade and
+// its "Sort your spares" sheet; accept the pre-sort (burnt -> Glovebox, rest -> Boot).
+await page.waitForSelector('.sort-sheet', { timeout: 3000 }).then(() => page.locator('#sort-done').click()).catch(() => {});
+await page.waitForTimeout(500);
 
 // 3) Seeded stacker album renders
 assert((await page.locator('#stacker-list .card').count()) === 1, 'one filled stacker card after reload (persistence)');

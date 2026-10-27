@@ -2,7 +2,8 @@
 // on your CDs" box, and the box no longer appears in Add CD -> Burnt CD.
 import { chromium } from 'playwright';
 
-const EXE = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+// Uses Playwright's own browser; set CHROME_PATH to use a specific Chrome.
+const EXE = process.env.CHROME_PATH || undefined;
 const BASE = 'http://127.0.0.1:8123';
 
 const browser = await chromium.launch({ executablePath: EXE });
@@ -30,6 +31,11 @@ await page.evaluate(() => new Promise(res => {
 }));
 await page.reload({ waitUntil: 'networkidle' });
 
+// Stage 1: seeding the old single-car shape triggers the one-time upgrade and
+// its "Sort your spares" sheet; accept the pre-sort (burnt -> Glovebox, rest -> Boot).
+await page.waitForSelector('.sort-sheet', { timeout: 3000 }).then(() => page.locator('#sort-done').click()).catch(() => {});
+await page.waitForTimeout(500);
+
 // ---- the tab ----
 const tabs = await page.$$eval('.tab', els => els.map(e => e.dataset.tab));
 ok(JSON.stringify(tabs) === '["stacker","collection","spares"]', 'three tabs, Collection between the two originals: ' + tabs);
@@ -45,16 +51,17 @@ const cds = await page.$$eval('#collection-list .card', els => els.map(e => ({ t
 ok(cds.length === 4, 'empty search lists all 4 owned CDs: ' + JSON.stringify(cds.map(c => c.t)));
 const tagOf = t => (cds.find(c => c.t === t) || {}).s;
 ok(tagOf('Channel Orange') === 'In Stacker', 'stacker disc tagged "In Stacker"');
-ok(tagOf('Rumours') === 'Spares' && tagOf('Road Trip') === 'Spares', 'spares tagged "Spares"');
+// Stage 1: the old Spares pile is split into Glovebox (burnt) and Boot.
+ok(tagOf('Rumours') === 'Boot' && tagOf('Road Trip') === 'Glovebox', 'former spares tagged Boot / Glovebox');
 ok(tagOf('Blonde') === 'In Dash', 'dash disc tagged "In Dash"');
 ok(cds.find(c => c.t === 'Road Trip').b, 'burnt disc keeps its BURNT badge');
-await page.screenshot({ path: process.env.SHOT ? process.env.SHOT + '/collection-empty.png' : '/dev/null' });
+if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT + '/collection-empty.png' });
 
 // ---- search ----
 const hits = async q => { await page.locator('#collection-search').fill(q); return page.$$eval('#collection-list .own-hit', els => els.map(e => ({ t: e.querySelector('.own-title').textContent.trim(), s: e.querySelector('.own-sub').textContent.trim(), w: e.querySelector('.own-where').textContent.trim() }))); };
 let h = await hits('sweet life');
 ok(h.length === 1 && h[0].w === 'In Stacker' && h[0].s === 'Channel Orange · Frank Ocean', 'song result: title, album · artist, status: ' + JSON.stringify(h));
-h = await hits('dreams'); ok(h.length === 1 && h[0].w === 'Spares', 'finds a song in Spares');
+h = await hits('dreams'); ok(h.length === 1 && h[0].w === 'Boot', 'finds a song in the Boot (former Spares)');
 h = await hits('nikes'); ok(h.length === 1 && h[0].w === 'In Dash', 'finds a song on the Dash');
 h = await hits('rihanna'); ok(h.length === 1 && h[0].s === 'Road Trip · Rihanna', 'burnt tracklists are searched, with per-track artist');
 h = await hits('drake'); ok(h.length === 2, 'matches featured artists too');
@@ -72,7 +79,7 @@ await page.locator('.sheet-close').click(); await page.waitForTimeout(900);
 await page.locator('#collection-search').fill('');
 await page.locator('#collection-list .card', { hasText: 'Rumours' }).click();
 await page.waitForSelector('.sheet .sheet-title');
-ok((await page.locator('.sheet .sheet-title').innerText()).includes('Rumours') && (await page.locator('.sheet .sheet-loc').textContent()) === 'Spares', 'tapping a CD opens its detail view (Spares)');
+ok((await page.locator('.sheet .sheet-title').innerText()).includes('Rumours') && (await page.locator('.sheet .sheet-loc').textContent()) === 'Boot', 'tapping a CD opens its detail view (Boot)');
 await page.locator('.sheet-close').click(); await page.waitForTimeout(900);
 
 // ---- Burnt CD no longer has the search ----

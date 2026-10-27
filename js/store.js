@@ -59,29 +59,25 @@ function reqAsPromise(request) {
 
 /* ---------- AppState ---------- */
 
-const DEFAULT_STATE = () => ({
-  stacker: Array(10).fill(null), // index 0-9 -> Slot 1-10; null = empty slot
-  dash: null,
-  spares: [],
-});
-
-export async function loadState() {
+/** The stored record exactly as saved (v1 or v2), or null. Shape checks and
+ *  migration live in model.js; this layer only reads and writes. */
+export async function loadRaw() {
   try {
     const rec = await tx('state', 'readonly', s => reqAsPromise(s.get('app')));
-    if (rec && rec.data) {
-      // defensively normalise shape
-      const d = rec.data;
-      if (!Array.isArray(d.stacker)) d.stacker = Array(10).fill(null);
-      while (d.stacker.length < 10) d.stacker.push(null);
-      d.stacker.length = 10;
-      if (!Array.isArray(d.spares)) d.spares = [];
-      if (d.dash === undefined) d.dash = null;
-      return d;
-    }
+    return rec && rec.data ? rec.data : null;
   } catch (e) {
-    console.warn('loadState failed', e);
+    console.warn('loadRaw failed', e);
+    return null;
   }
-  return DEFAULT_STATE();
+}
+
+/** Keep the untouched pre-migration record, once. Never overwritten or
+ *  deleted, so a bad migration can always be undone. */
+export async function saveBackupOnce(data) {
+  const existing = await tx('state', 'readonly', s => reqAsPromise(s.get('app-v1-backup')));
+  if (existing) return false;
+  await tx('state', 'readwrite', s => s.put({ key: 'app-v1-backup', data, savedAt: Date.now() }));
+  return true;
 }
 
 export async function saveState(state) {

@@ -8,7 +8,7 @@
    app once fetched, which is what makes covers work offline.
    ============================================================ */
 
-const CACHE = 'brera-shell-v9';
+const CACHE = 'brera-shell-v10';
 const SHELL = [
   './',
   './index.html',
@@ -16,6 +16,7 @@ const SHELL = [
   './js/app.js',
   './js/store.js',
   './js/itunes.js',
+  './js/model.js',
   './js/spotify.js',
   './js/util.js',
   './manifest.webmanifest',

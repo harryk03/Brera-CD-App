@@ -722,3 +722,30 @@ body { min-height: 100vh; }
   .sheet, .modal, .scrim, .card, .btn, .icon-btn { transition-duration: 1ms !important; }
   .reveal { opacity: 1 !important; }
 }
+
+/* ---------- Stage 1: multi-car model ---------- */
+
+/* Where a spare physically is (Glovebox / Boot), beside its swap button. */
+.loc-tag { font-size: 10.5px; padding: 3px 8px; }
+
+/* "Put in <car>" on an Unassigned CD's detail sheet. */
+.place-zone { margin: 4px 18px 0; padding-top: 14px; border-top: 1px solid var(--card-border); }
+.place-label { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-2); margin-bottom: 8px; }
+.place-row { display: flex; gap: 8px; }
+.place-row .btn { flex: 1; }
+
+/* Sort your spares (one time, after the upgrade). */
+.sort-list { display: flex; flex-direction: column; gap: 10px; }
+.sort-row { padding: 12px; background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius); }
+.sort-text { margin-bottom: 8px; min-width: 0; }
+.sort-title { font-weight: 700; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sort-artist { font-size: 12.5px; color: var(--text-2); }
+.sort-seg { margin: 0; }
+.sort-seg button { padding: 9px 4px; font-size: 13px; }
+
+/* Test tools, only with ?dev=1. */
+.dev-tools { margin-top: 22px; padding: 12px; border: 1.5px dashed var(--card-border); border-radius: var(--radius); }
+.dev-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-2); margin-bottom: 8px; }
+.dev-row, .dev-cars { display: flex; gap: 8px; flex-wrap: wrap; }
+.dev-cars { margin-top: 10px; }
+.dev-cars .btn.on { background: var(--text); color: var(--bg); border-color: var(--text); }

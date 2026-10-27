@@ -1,18 +1,30 @@
 /* ============================================================
-   app.js — Brera Stacker application.
+   app.js — Stacker application (placeholder name; see README).
 
-   Mirrors a real physical constraint: 10 rear-boot stacker slots
-   + 1 hot-swap dash slot, plus a library of spare CDs. All state
-   is persisted to IndexedDB (store.js) and survives restarts.
+   Mirrors real cars: each has a stacker, a dash slot, a glovebox and
+   a boot, and every CD you own sits in exactly one of those places or
+   is Unassigned. The data model lives in model.js; all state is
+   persisted to IndexedDB (store.js) and survives restarts.
    ============================================================ */
 
-import { loadState, saveState, imageUrl, putImage, deleteImage, getImageBlob } from './store.js';
+import { loadRaw, saveBackupOnce, saveState, imageUrl, putImage, deleteImage, getImageBlob } from './store.js';
+import * as M from './model.js';
 import * as itunes from './itunes.js';
 import { NetworkError } from './itunes.js';
 import * as spotify from './spotify.js';
 import { uuid, initials, makePalette, escapeHtml, debounce, h, toast, dupKey } from './util.js';
 
 let state = null;
+const DEV = new URLSearchParams(location.search).has('dev'); // test-only tools
+
+/* Shorthands over the model. */
+const car = () => M.selectedCar(state);
+const D = id => M.disc(state, id);
+/** The selected car's Glovebox + Boot, as { album, loc } (the Spares tab). */
+const carSpares = (c = car()) => [
+  ...c.glovebox.map(id => ({ album: D(id), loc: 'glovebox' })),
+  ...c.boot.map(id => ({ album: D(id), loc: 'boot' })),
+].filter(x => x.album);
 let currentTab = 'stacker';
 let reordering = false;
 let spareFilter = '';
@@ -21,10 +33,11 @@ let collectionFilter = '';
 /* ---------- boot ---------- */
 
 async function boot() {
-  state = await loadState();
+  state = await loadAppState();
   registerSW();
   wireTabs();
   render();
+  if (state.pendingSort) openSortSpares();
   // background artwork fetch, sequential, silent
   backfillArtwork();
 }
@@ -48,6 +61,25 @@ function showUpdateBanner() {
   banner.querySelector('#update-refresh').addEventListener('click', () => {
     location.reload();
   });
+}
+
+/** Load the stored collection, migrating the original single-car shape into
+ *  car "Brera" on first run. The old record is kept as a backup first. */
+async function loadAppState() {
+  const raw = await loadRaw();
+  if (M.isV2(raw)) return M.normalize(raw, uuid);
+  if (M.isV1(raw)) {
+    const migrated = M.normalize(M.migrateV1(raw, uuid), uuid);
+    try {
+      await saveBackupOnce(raw);
+      await saveState(migrated);
+    } catch (e) {
+      console.error('migration save failed', e);
+      toast('Could not save the upgraded collection — nothing was changed.', true);
+    }
+    return migrated;
+  }
+  return M.emptyState(uuid);
 }
 
 /* ---------- persistence ---------- */
@@ -98,15 +130,17 @@ function renderStacker() {
   const view = document.getElementById('view-stacker');
   view.classList.toggle('reordering', reordering);
 
-  const rows = state.stacker.map((album, i) => stackerRow(album, i)).join('');
+  const c = car();
+  const rows = c.stacker.map((id, i) => stackerRow(D(id), i, c.stackerSize)).join('');
 
   view.innerHTML = `
     <header class="app-header">
-      <h1 class="app-title">Brera Stacker</h1>
-      <p class="app-subtitle">10-disc boot stacker &middot; 1 dash slot</p>
+      <h1 class="app-title">${escapeHtml(c.title)}</h1>
+      <p class="app-subtitle">${escapeHtml(c.subtitle)}</p>
+      ${devCarTools()}
     </header>
 
-    <div class="section-label">Stacker &middot; Slots 1–10</div>
+    <div class="section-label">Stacker &middot; Slots 1–${c.stackerSize}</div>
     <div id="stacker-list">${rows}</div>
 
     <div class="footer-actions">
@@ -127,22 +161,23 @@ function renderStacker() {
 
   view.querySelectorAll('#stacker-list [data-slot]').forEach(node => {
     const i = Number(node.getAttribute('data-slot'));
-    const album = state.stacker[i];
+    const album = D(c.stacker[i]);
     if (reordering) {
       node.querySelector('.move-up')?.addEventListener('click', e => { e.stopPropagation(); moveSlot(i, -1); });
       node.querySelector('.move-down')?.addEventListener('click', e => { e.stopPropagation(); moveSlot(i, +1); });
     } else if (album) {
-      node.addEventListener('click', () => openTracklist(node, album, { source: 'stacker', index: i }));
+      node.addEventListener('click', () => openTracklist(node, album, { source: 'stacker', loc: 'stacker', index: i, carId: c.id }));
     } else {
       node.addEventListener('click', () => openSwapToDestination({ type: 'stacker', index: i }));
     }
   });
 
   wireDash(view);
+  wireDevCarTools(view);
   fillCovers(view);
 }
 
-function stackerRow(album, i) {
+function stackerRow(album, i, size) {
   const num = `<span class="slot-num">${i + 1}</span>`;
   if (!album) {
     return `<div class="slot-empty" data-slot="${i}">
@@ -154,7 +189,7 @@ function stackerRow(album, i) {
       <div class="row-actions">
         <div class="reorder-controls">
           <button class="icon-btn move-up" ${i === 0 ? 'disabled' : ''} aria-label="Move up">▲</button>
-          <button class="icon-btn move-down" ${i === 9 ? 'disabled' : ''} aria-label="Move down">▼</button>
+          <button class="icon-btn move-down" ${i === size - 1 ? 'disabled' : ''} aria-label="Move down">▼</button>
         </div>
       </div>` : '';
   return `<div class="card" data-slot="${i}">
@@ -169,7 +204,8 @@ function stackerRow(album, i) {
 }
 
 function dashMarkup() {
-  if (!state.dash) {
+  const a = D(car().dash);
+  if (!a) {
     return `<div class="dash-empty" id="dash-empty">
         <div class="plus">+</div>
         <div>
@@ -178,7 +214,6 @@ function dashMarkup() {
         </div>
       </div>`;
   }
-  const a = state.dash;
   return `<div class="card dash" data-dash="1">
       <span class="slot-num">⏵</span>
       ${coverHtml(a)}
@@ -202,7 +237,7 @@ function wireDash(view) {
   if (card) {
     const eject = card.querySelector('#dash-eject');
     eject.addEventListener('click', e => { e.stopPropagation(); ejectDash(); });
-    card.addEventListener('click', () => openTracklist(card, state.dash, { source: 'dash' }));
+    card.addEventListener('click', () => openTracklist(card, D(car().dash), { source: 'dash', loc: 'dash', carId: car().id }));
   }
 }
 
@@ -297,30 +332,28 @@ function drawCollectionList() {
 
 /* ---------- Spares view ---------- */
 
-function sortSpares() {
-  state.spares.sort((a, b) => {
-    const ai = a.artist.toLowerCase(), bi = b.artist.toLowerCase();
-    if (ai !== bi) return ai < bi ? -1 : 1;
-    const at = a.title.toLowerCase(), bt = b.title.toLowerCase();
-    return at < bt ? -1 : at > bt ? 1 : 0;
-  });
+/** Artist A–Z, then title. Display order only; storage order is untouched. */
+function byArtistTitle(a, b) {
+  const ai = a.artist.toLowerCase(), bi = b.artist.toLowerCase();
+  if (ai !== bi) return ai < bi ? -1 : 1;
+  const at = a.title.toLowerCase(), bt = b.title.toLowerCase();
+  return at < bt ? -1 : at > bt ? 1 : 0;
 }
 
 function renderSpares() {
   const view = document.getElementById('view-spares');
-  sortSpares();
+  const spares = carSpares().sort((x, y) => byArtistTitle(x.album, y.album));
 
   const q = spareFilter.trim().toLowerCase();
-  // Filter the DISPLAY only; underlying sorted data is untouched.
-  const visible = state.spares
-    .map((a, idx) => ({ a, idx }))
-    .filter(({ a }) => !q || a.title.toLowerCase().includes(q) || a.artist.toLowerCase().includes(q));
+  // Filter the DISPLAY only; underlying data is untouched.
+  const visible = spares
+    .filter(({ album: a }) => !q || a.title.toLowerCase().includes(q) || a.artist.toLowerCase().includes(q));
 
   let listHtml;
-  if (state.spares.length === 0) {
+  if (spares.length === 0) {
     listHtml = `<div class="empty-state">
         <div class="big">No spares yet</div>
-        <div class="small">Add a CD with the button below — it lands here, ready to swap into rotation.</div>
+        <div class="small">CDs in this car’s glovebox and boot show here. New CDs start as Unassigned in Collection.</div>
       </div>`;
   } else if (visible.length === 0) {
     listHtml = `<div class="empty-state">
@@ -328,13 +361,13 @@ function renderSpares() {
         <div class="small">Try a different title or artist.</div>
       </div>`;
   } else {
-    listHtml = visible.map(({ a, idx }) => spareRow(a, idx)).join('');
+    listHtml = visible.map(({ album, loc }) => spareRow(album, loc)).join('');
   }
 
   view.innerHTML = `
     <header class="app-header">
       <h1 class="app-title">Spares</h1>
-      <p class="app-subtitle">Owned, not currently in the car &middot; ${state.spares.length} CD${state.spares.length === 1 ? '' : 's'}</p>
+      <p class="app-subtitle">${escapeHtml(car().name)} glovebox &amp; boot &middot; ${spares.length} CD${spares.length === 1 ? '' : 's'}</p>
     </header>
 
     <div class="search-wrap">
@@ -357,7 +390,9 @@ function renderSpares() {
       <input type="file" id="import-file" accept="application/json,.json" hidden />
     </div>
     <p class="sync-note">Send the exported file to another phone to copy your whole collection — CDs, slot positions and covers.</p>
+    ${devSampleTools()}
   `;
+  wireDevSampleTools(view);
 
   view.querySelector('#export-btn').addEventListener('click', exportCollection);
   view.querySelector('#import-btn').addEventListener('click', () => view.querySelector('#import-file').click());
@@ -381,25 +416,27 @@ function renderSpares() {
 
   view.querySelectorAll('#spares-list [data-spare]').forEach(node => {
     const id = node.getAttribute('data-spare');
-    const album = state.spares.find(s => s.id === id);
+    const album = D(id);
+    const loc = node.getAttribute('data-loc');
     node.querySelector('.swap-btn')?.addEventListener('click', e => {
       e.stopPropagation();
       openSwapFromSpare(album);
     });
-    node.addEventListener('click', () => openTracklist(node, album, { source: 'spares' }));
+    node.addEventListener('click', () => openTracklist(node, album, { source: 'spares', loc, carId: car().id }));
   });
 
   fillCovers(view);
 }
 
-function spareRow(album) {
-  return `<div class="card" data-spare="${escapeHtml(album.id)}">
+function spareRow(album, loc) {
+  return `<div class="card" data-spare="${escapeHtml(album.id)}" data-loc="${loc}">
       ${coverHtml(album)}
       <div class="card-body">
         <div class="card-title">${escapeHtml(album.title)}${album.isBurnt ? '<span class="badge-burnt">BURNT</span>' : ''}</div>
         <div class="card-artist">${escapeHtml(album.artist)}</div>
       </div>
       <div class="row-actions">
+        <span class="own-where loc-tag">${M.LOC_LABEL[loc]}</span>
         <button class="icon-btn swap-btn" aria-label="Swap into rotation">⇄</button>
       </div>
     </div>`;
@@ -410,49 +447,27 @@ function spareRow(album) {
    ====================================================================== */
 
 function moveSlot(i, dir) {
-  const j = i + dir;
-  if (j < 0 || j > 9) return;
-  const arr = state.stacker;
-  [arr[i], arr[j]] = [arr[j], arr[i]];
+  if (!M.moveInStacker(car(), i, i + dir)) return;
   commit();
   renderStacker();
 }
 
 function ejectDash() {
-  if (!state.dash) return;
-  const disc = state.dash;
-  state.dash = null;
-  state.spares.push(disc); // returns to Spares
+  const c = car();
+  if (!c.dash) return;
+  M.putAt(state, c.dash, c, 'glovebox'); // Eject goes to the Glovebox
   commit();
   render();
 }
 
 /**
- * Core swap. Moves a spare (by id) into a destination slot; whatever
- * occupied the destination returns to Spares. If the destination was
- * empty there is nothing to return — the spare is simply removed from
- * Spares (never replaced with a null placeholder).
+ * Core swap. Moves a spare (by id) into the selected car's dash or a stacker
+ * slot; whatever was there takes the spare's old place (its glovebox or
+ * boot). An empty destination just takes the spare — no placeholder left.
  */
 function performSwap(spareId, dest) {
-  const si = state.spares.findIndex(s => s.id === spareId);
-  if (si === -1) return;
-  const spare = state.spares[si];
-
-  let occupant = null;
-  if (dest.type === 'dash') {
-    occupant = state.dash;          // may be null (empty dash edge case)
-    state.dash = spare;
-  } else {
-    occupant = state.stacker[dest.index]; // may be null (empty slot)
-    state.stacker[dest.index] = spare;
-  }
-
-  // Remove the spare from the library outright.
-  state.spares.splice(si, 1);
-
-  // Return the previous occupant, if any, to the library.
-  if (occupant) state.spares.push(occupant);
-
+  if (!D(spareId)) return;
+  M.exchange(state, spareId, car(), dest.type === 'dash' ? 'dash' : 'stacker', dest.index || 0);
   commit();
   render();
 }
@@ -485,9 +500,11 @@ function trackHtml(album, i) {
 }
 
 function locLabel(ctx) {
-  if (ctx.source === 'stacker') return `Slot ${ctx.index + 1}`;
-  if (ctx.source === 'dash') return 'Dash';
-  return 'Spares';
+  const carName = ctx.carId && state.cars.length > 1 ? `${(M.carById(state, ctx.carId) || {}).name} · ` : '';
+  if (ctx.loc === 'stacker') return `${carName}Slot ${ctx.index + 1}`;
+  if (ctx.loc === 'dash') return `${carName}Dash`;
+  if (ctx.loc === 'unassigned') return 'Unassigned';
+  return carName + (M.LOC_LABEL[ctx.loc] || 'Spares');
 }
 
 function openTracklist(cardEl, album, ctx) {
@@ -534,6 +551,7 @@ function openTracklist(cardEl, album, ctx) {
             </div>
           </div>
           <ul class="tracklist">${tracksHtml}</ul>
+          ${ctx.loc === 'unassigned' ? placeZoneHtml() : ''}
           ${isSpare ? deleteZoneHtml() : ''}
         </div>
       </div>
@@ -568,6 +586,7 @@ function openTracklist(cardEl, album, ctx) {
   // interactions
   sheet.querySelector('.sheet-close').addEventListener('click', closeTracklist);
   scrim.addEventListener('click', closeTracklist);
+  if (ctx.loc === 'unassigned') wirePlaceZone(sheet, album);
   if (isSpare) wireDeleteZone(sheet, album);
 }
 
@@ -607,7 +626,35 @@ function closeTracklist() {
   setTimeout(done, 700); // safety
 }
 
-/* ---------- delete zone (spares only) ---------- */
+/* ---------- place zone (Unassigned only) ----------
+   Stage 1 keeps this minimal: put the disc in the selected car's Glovebox
+   or Boot. Stage 2 adds the full movement rules. */
+
+function placeZoneHtml() {
+  const c = car();
+  return `<div class="place-zone reveal">
+      <div class="place-label">Put in ${escapeHtml(c.name)}</div>
+      <div class="place-row">
+        <button class="btn" data-place="glovebox">Glovebox</button>
+        <button class="btn" data-place="boot">Boot</button>
+      </div>
+    </div>`;
+}
+
+function wirePlaceZone(sheet, album) {
+  const zone = sheet.querySelector('.place-zone');
+  reveal(zone, 480);
+  zone.querySelectorAll('[data-place]').forEach(btn => btn.addEventListener('click', () => {
+    const loc = btn.dataset.place;
+    closeTracklist();
+    M.putAt(state, album.id, car(), loc);
+    commit();
+    render();
+    toast(`“${album.title}” is now in the ${car().name} ${M.LOC_LABEL[loc].toLowerCase()}.`);
+  }));
+}
+
+/* ---------- delete zone (glovebox, boot and Unassigned) ---------- */
 
 function deleteZoneHtml() {
   return `<div class="delete-zone">
@@ -642,9 +689,8 @@ function wireDeleteZone(sheet, album) {
 }
 
 async function deleteSpare(id) {
-  const idx = state.spares.findIndex(s => s.id === id);
-  if (idx === -1) return;
-  const [removed] = state.spares.splice(idx, 1);
+  const removed = M.removeDisc(state, id);
+  if (!removed) return;
   if (removed.coverImageUri) deleteImage(removed.coverImageUri).catch(() => {});
   await commit();
   render();
@@ -656,7 +702,7 @@ async function deleteSpare(id) {
    ====================================================================== */
 
 function modalShell(title, opts = {}) {
-  const { subtitle = '', showClose = true } = opts;
+  const { subtitle = '', showClose = true, onClose = null } = opts;
   const l = layer();
   l.classList.add('active');
   syncLayer();
@@ -678,10 +724,20 @@ function modalShell(title, opts = {}) {
     scrim.classList.add('show');
     modal.classList.add('show');
   }));
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
     scrim.classList.remove('show');
     modal.classList.remove('show');
-    setTimeout(() => { scrim.remove(); modal.remove(); if (!activeSheet) l.classList.remove('active'); syncLayer(); }, 360);
+    setTimeout(() => {
+      scrim.remove(); modal.remove();
+      // Another sheet may have opened while this one closed (e.g. import ->
+      // "Sort your spares"); only switch the layer off when none remain.
+      if (!activeSheet && !l.querySelector('.modal')) l.classList.remove('active');
+      syncLayer();
+    }, 360);
+    if (onClose) onClose();
   };
   scrim.addEventListener('click', close);
   const cx = modal.querySelector('.modal-close');
@@ -692,9 +748,10 @@ function modalShell(title, opts = {}) {
 /** From a Spare's ⇄ button: choose which slot/dash to swap it into. */
 function openSwapFromSpare(spare) {
   const { body, close } = modalShell(`Swap “${spare.title}” into…`);
+  const c = car();
   const dests = [];
-  for (let i = 0; i < 10; i++) {
-    const occ = state.stacker[i];
+  for (let i = 0; i < c.stackerSize; i++) {
+    const occ = D(c.stacker[i]);
     dests.push(`<div class="swap-dest" data-type="stacker" data-index="${i}">
         <span class="d-num">Slot ${i + 1}</span>
         <div class="d-body">${occ
@@ -703,7 +760,7 @@ function openSwapFromSpare(spare) {
         <span class="r-add">⇄</span>
       </div>`);
   }
-  const dOcc = state.dash;
+  const dOcc = D(c.dash);
   dests.push(`<div class="swap-dest dash" data-type="dash">
       <span class="d-num">Dash</span>
       <div class="d-body">${dOcc
@@ -712,7 +769,7 @@ function openSwapFromSpare(spare) {
       <span class="r-add">⇄</span>
     </div>`);
 
-  body.innerHTML = `<p class="hint">Whatever is in the chosen slot moves back to Spares.</p>${dests.join('')}`;
+  body.innerHTML = `<p class="hint">Whatever is in the chosen slot moves to where this CD was.</p>${dests.join('')}`;
   body.querySelectorAll('.swap-dest').forEach(node => {
     node.addEventListener('click', () => {
       const type = node.getAttribute('data-type');
@@ -729,13 +786,13 @@ function openSwapFromSpare(spare) {
 function openSwapToDestination(dest) {
   const label = dest.type === 'dash' ? 'the Dash' : `Slot ${dest.index + 1}`;
   const { body, close } = modalShell(`Fill ${label} from Spares`);
-  if (state.spares.length === 0) {
+  const spares = carSpares().sort((x, y) => byArtistTitle(x.album, y.album)).map(x => x.album);
+  if (spares.length === 0) {
     body.innerHTML = `<div class="empty-state"><div class="big">No spares available</div>
       <div class="small">Add a CD first, then swap it in here.</div></div>`;
     return;
   }
-  sortSpares();
-  const rows = state.spares.map(a => `
+  const rows = spares.map(a => `
     <div class="swap-dest" data-id="${escapeHtml(a.id)}">
       <div class="d-body">
         <div class="d-occ">${escapeHtml(a.title)}${a.isBurnt ? '<span class="badge-burnt">BURNT</span>' : ''}</div>
@@ -747,7 +804,7 @@ function openSwapToDestination(dest) {
   body.querySelectorAll('.swap-dest').forEach(node => {
     node.addEventListener('click', () => {
       const id = node.getAttribute('data-id');
-      const spare = state.spares.find(s => s.id === id);
+      const spare = D(id);
       performSwap(id, dest);
       close();
       toast(`“${spare.title}” is now in ${label}.`);
@@ -761,18 +818,22 @@ function openSwapToDestination(dest) {
 
 function duplicateOf(title, artist) {
   const key = dupKey(title, artist);
-  const all = [...state.stacker.filter(Boolean), state.dash, ...state.spares].filter(Boolean);
-  return all.find(a => dupKey(a.title, a.artist) === key) || null;
+  return M.allDiscs(state).find(a => dupKey(a.title, a.artist) === key) || null;
 }
 
 /** Every CD you own and where it lives. `ctx` is what openTracklist needs to
  *  open the CD's detail view; `status` is the tag shown in the Collection tab. */
 function ownedPlaces() {
-  return [
-    ...state.stacker.map((a, i) => a && { album: a, where: `Slot ${i + 1}`, status: 'In Stacker', ctx: { source: 'stacker', index: i } }),
-    state.dash && { album: state.dash, where: 'Dash', status: 'In Dash', ctx: { source: 'dash' } },
-    ...state.spares.map(a => ({ album: a, where: 'Spares', status: 'Spares', ctx: { source: 'spares' } })),
-  ].filter(Boolean);
+  const STATUS = { stacker: 'In Stacker', dash: 'In Dash', glovebox: 'Glovebox', boot: 'Boot', unassigned: 'Unassigned' };
+  return M.allPlaces(state).map(({ album, car: c, loc, index }) => ({
+    album,
+    where: loc === 'stacker' ? `Slot ${index + 1}` : loc === 'unassigned' ? 'Unassigned' : M.LOC_LABEL[loc],
+    status: STATUS[loc],
+    ctx: {
+      source: loc === 'stacker' ? 'stacker' : loc === 'dash' ? 'dash' : 'spares',
+      loc, index, carId: c ? c.id : null,
+    },
+  }));
 }
 
 /** Search every song on every CD you own (Stacker, Dash, Spares) by title or
@@ -1127,7 +1188,7 @@ async function confirmAlbum(model, errEl, close) {
   await attachCover(album, model.uploadedBlob, model.artworkUrl);
   addToSpares(album);
   close();
-  toast(`“${title}” added to Spares.`);
+  toast(`“${title}” added — it’s Unassigned in Collection until you place it.`);
 }
 
 /* ---------- Mode B: Burnt CD ---------- */
@@ -1342,7 +1403,7 @@ function renderBurntMode(root, close) {
     await attachCover(album, model.uploadedBlob, null);
     addToSpares(album);
     close();
-    toast(`“${title}” added to Spares.`);
+    toast(`“${title}” added — it’s Unassigned in Collection until you place it.`);
   });
 }
 
@@ -1377,9 +1438,9 @@ async function attachCover(album, uploadedBlob, artworkUrl) {
   }
 }
 
+/** New CDs land Unassigned (in Collection) until you choose where they go. */
 function addToSpares(album) {
-  state.spares.push(album);
-  sortSpares();
+  M.addDisc(state, album);
   commit();
   render();
 }
@@ -1418,7 +1479,7 @@ async function exportCollection() {
   try {
     // collect every referenced cover image
     const ids = new Set();
-    [...state.stacker, state.dash, ...state.spares].filter(Boolean).forEach(a => {
+    M.allDiscs(state).forEach(a => {
       if (a.coverImageUri) ids.add(a.coverImageUri);
     });
     const images = {};
@@ -1426,7 +1487,7 @@ async function exportCollection() {
       const blob = await getImageBlob(id);
       if (blob) images[id] = await blobToDataURL(blob);
     }
-    const payload = { app: EXPORT_TAG, version: 1, exportedAt: new Date().toISOString(), state, images };
+    const payload = { app: EXPORT_TAG, version: 2, exportedAt: new Date().toISOString(), state, images };
     const json = JSON.stringify(payload);
     const fname = `brera-stacker-${new Date().toISOString().slice(0, 10)}.json`;
     const file = new File([json], fname, { type: 'application/json' });
@@ -1461,12 +1522,15 @@ async function handleImportFile(file) {
     toast('That file isn’t readable — is it a Brera backup?', true);
     return;
   }
-  if (!payload || payload.app !== EXPORT_TAG || !payload.state || !Array.isArray(payload.state.stacker)) {
+  if (!payload || payload.app !== EXPORT_TAG || !(M.isV1(payload.state) || M.isV2(payload.state))) {
     toast('That file isn’t a Brera Stacker backup.', true);
     return;
   }
-  const s = payload.state;
-  const count = s.stacker.filter(Boolean).length + (s.dash ? 1 : 0) + (Array.isArray(s.spares) ? s.spares.length : 0);
+  // Old single-car backups are migrated on the way in, exactly like on first run.
+  const incoming = M.isV2(payload.state)
+    ? M.normalize(payload.state, uuid)
+    : M.normalize(M.migrateV1(payload.state, uuid), uuid);
+  const count = Object.keys(incoming.discs).length;
   const when = payload.exportedAt ? new Date(payload.exportedAt).toLocaleDateString() : 'an unknown date';
 
   confirmSheet({
@@ -1481,9 +1545,10 @@ async function handleImportFile(file) {
             await putImage(id, blob);
           }
         }
-        await saveState(payload.state);
-        state = await loadState(); // normalises shape
+        state = incoming;
+        await saveState(state);
         render();
+        if (state.pendingSort) openSortSpares();
         toast(`Imported ${count} CD${count === 1 ? '' : 's'}.`);
         backfillArtwork(); // fetch any covers the file didn't include
       } catch (e) {
@@ -1507,12 +1572,155 @@ function confirmSheet({ title, message, confirmLabel, onConfirm }) {
 }
 
 /* ======================================================================
+   SORT YOUR SPARES — one time, after upgrading from the single-car app.
+
+   The old Spares pile is split by where each CD physically is. Migration
+   pre-sorts (burnt CDs -> Glovebox, the rest -> Boot); this sheet lets the
+   user correct that. Each tap applies straight away, so closing the sheet
+   any way keeps what's shown and finishes the sort.
+   ====================================================================== */
+
+function openSortSpares() {
+  const ids = (state.pendingSort || []).filter(id => D(id));
+  if (!ids.length) { delete state.pendingSort; commit(); return; }
+  const c = car();
+  const { modal, body, close } = modalShell('Sort your spares', {
+    subtitle: `Spares are now split by where each CD is in the ${c.name}. Check each one, then tap Done.`,
+    onClose: () => { delete state.pendingSort; commit(); render(); },
+  });
+  modal.classList.add('sort-sheet');
+  const current = id => (M.placeOf(state, id) || { loc: 'unassigned' }).loc;
+  const OPTS = [['glovebox', 'Glovebox'], ['boot', 'Boot'], ['unassigned', 'Unassigned']];
+  const draw = () => {
+    body.innerHTML = `
+      <div class="sort-list">
+        ${ids.map(id => {
+          const a = D(id), loc = current(id);
+          return `<div class="sort-row" data-id="${escapeHtml(id)}">
+            <div class="sort-text">
+              <div class="sort-title">${escapeHtml(a.title)}${a.isBurnt ? '<span class="badge-burnt">BURNT</span>' : ''}</div>
+              <div class="sort-artist">${escapeHtml(a.artist)}</div>
+            </div>
+            <div class="segmented sort-seg" role="group" aria-label="Where is ${escapeHtml(a.title)}?">
+              ${OPTS.map(([k, label]) => `<button data-loc="${k}" class="${loc === k ? 'on' : ''}" aria-pressed="${loc === k}">${label}</button>`).join('')}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+      <button class="btn dark block" id="sort-done" style="margin-top:14px">Done</button>`;
+    body.querySelectorAll('.sort-row').forEach(row => {
+      row.querySelectorAll('[data-loc]').forEach(btn => btn.addEventListener('click', () => {
+        const id = row.dataset.id, loc = btn.dataset.loc;
+        if (loc === 'unassigned') M.detach(state, id);
+        else M.putAt(state, id, c, loc);
+        commit();
+        draw();
+      }));
+    });
+    body.querySelector('#sort-done').addEventListener('click', close);
+  };
+  draw();
+}
+
+/* ======================================================================
+   DEV TOOLS — only with ?dev=1 in the URL. A sample second car to test
+   multi-car before the real car switcher exists (stage 3). Everything it
+   creates is flagged `sample` so it can be removed cleanly.
+   ====================================================================== */
+
+function sampleAlbum(title, artist, tracks, extra = {}) {
+  return { id: uuid(), title, artist, isBurnt: false, coverImageUri: null, palette: makePalette(title + artist),
+    features: {}, trackArtists: null, tracks, dateAdded: Date.now(), sample: true, ...extra };
+}
+
+function addSampleMiata() {
+  if (state.cars.some(c => c.sample)) { toast('The sample Miata is already added.'); return; }
+  const miata = M.newCar(uuid, {
+    name: 'Miata', title: 'Miata Stacker', subtitle: '6-disc stacker · 1 dash slot', stackerSize: 6,
+    theme: { layout: 'block', shape: 'cd', nums: 'pixel', bg: '#141414', accent: '#1F5FBF' },
+  });
+  miata.sample = true;
+  const add = a => M.addDisc(state, a);
+  const stacker = [
+    sampleAlbum('Nevermind', 'Nirvana', ['Smells Like Teen Spirit', 'In Bloom', 'Come as You Are', 'Lithium']),
+    sampleAlbum('Discovery', 'Daft Punk', ['One More Time', 'Aerodynamic', 'Digital Love', 'Harder, Better, Faster, Stronger']),
+    sampleAlbum('Currents', 'Tame Impala', ['Let It Happen', 'The Less I Know the Better', 'Eventually']),
+    sampleAlbum('AM', 'Arctic Monkeys', ['Do I Wanna Know?', 'R U Mine?', 'Arabella']),
+    sampleAlbum('Thriller', 'Michael Jackson', ['Thriller', 'Beat It', 'Billie Jean']),
+    sampleAlbum('Parklife', 'Blur', ['Girls & Boys', 'Parklife', 'End of a Century']),
+  ];
+  stacker.forEach((a, i) => { add(a); miata.stacker[i] = a.id; });
+  const dash = sampleAlbum('Back in Black', 'AC/DC', ['Hells Bells', 'Back in Black', 'You Shook Me All Night Long']);
+  add(dash); miata.dash = dash.id;
+  const glove = [
+    sampleAlbum('Is This It', 'The Strokes', ['Someday', 'Last Nite', 'Hard to Explain']),
+    sampleAlbum('Miata Summer Mix', 'Various Artists', ['Mr. Brightside', 'Midnight City', 'Electric Feel'],
+      { isBurnt: true, trackArtists: ['The Killers', 'M83', 'MGMT'] }),
+  ];
+  glove.forEach(a => { add(a); miata.glovebox.push(a.id); });
+  const boot = [
+    sampleAlbum('The Joshua Tree', 'U2', ['Where the Streets Have No Name', 'With or Without You']),
+    sampleAlbum('Rumours', 'Fleetwood Mac', ['Dreams', 'Go Your Own Way', 'The Chain']),
+  ];
+  boot.forEach(a => { add(a); miata.boot.push(a.id); });
+  // Two loose CDs owned but in no car.
+  add(sampleAlbum('Abbey Road', 'The Beatles', ['Come Together', 'Something', 'Here Comes the Sun']));
+  add(sampleAlbum('Kind of Blue', 'Miles Davis', ['So What', 'Freddie Freeloader', 'Blue in Green']));
+  state.cars.push(miata);
+  commit();
+  render();
+  toast('Sample Miata added — 6-disc stacker, plus 2 Unassigned CDs.');
+}
+
+function removeSampleMiata() {
+  for (const a of M.allDiscs(state)) if (a.sample) M.removeDisc(state, a.id);
+  state.cars = state.cars.filter(c => !c.sample);
+  M.normalize(state, uuid);
+  commit();
+  render();
+  toast('Sample car and its CDs removed.');
+}
+
+function devSampleTools() {
+  if (!DEV) return '';
+  const has = state.cars.some(c => c.sample);
+  return `<div class="dev-tools">
+      <div class="dev-label">Test tools (?dev=1)</div>
+      <div class="dev-row">
+        <button class="btn ghost" id="dev-add-miata" ${has ? 'disabled' : ''}>Add sample Miata</button>
+        <button class="btn ghost" id="dev-remove-miata" ${has ? '' : 'disabled'}>Remove sample car</button>
+      </div>
+    </div>`;
+}
+
+function wireDevSampleTools(view) {
+  view.querySelector('#dev-add-miata')?.addEventListener('click', addSampleMiata);
+  view.querySelector('#dev-remove-miata')?.addEventListener('click', removeSampleMiata);
+}
+
+/** Stand-in car switch until the real switcher (stage 3). */
+function devCarTools() {
+  if (!DEV || state.cars.length < 2) return '';
+  return `<div class="dev-cars" role="group" aria-label="Car (test)">
+      ${state.cars.map(c => `<button class="btn ghost ${c.id === state.selectedCarId ? 'on' : ''}" data-car="${escapeHtml(c.id)}">${escapeHtml(c.name)}</button>`).join('')}
+    </div>`;
+}
+
+function wireDevCarTools(view) {
+  view.querySelectorAll('[data-car]').forEach(btn => btn.addEventListener('click', () => {
+    state.selectedCarId = btn.dataset.car;
+    reordering = false;
+    commit();
+    render();
+  }));
+}
+
+/* ======================================================================
    BACKGROUND ARTWORK BACKFILL — sequential, silent
    ====================================================================== */
 
 async function backfillArtwork() {
-  const all = [...state.stacker.filter(Boolean), state.dash, ...state.spares].filter(Boolean);
-  const missing = all.filter(a => !a.coverImageUri);
+  const missing = M.allDiscs(state).filter(a => !a.coverImageUri);
   for (const album of missing) {
     try {
       const url = await itunes.findArtwork(album.artist, album.title);

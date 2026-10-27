@@ -1,5 +1,6 @@
 import { chromium } from 'playwright';
-const EXE = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+// Uses Playwright's own browser; set CHROME_PATH to use a specific Chrome.
+const EXE = process.env.CHROME_PATH || undefined;
 const BASE = 'http://127.0.0.1:8123';
 const SHOT = '/tmp/claude-0/-home-user-Brera-CD-App/993a40f2-1604-5a22-974d-bc3bf4d7d7d4/scratchpad';
 
